@@ -62,7 +62,9 @@ export function normalizeStatus(instance, status, settings, now = Date.now()) {
   const memory = metrics[settings.metricKeys.memory];
   const users = metrics[settings.metricKeys.players];
   const rawState = status?.State ?? status?.AppState ?? instance.rawAppState;
-  const appState = instance.ampRunning === false ? 'stopped' : settings.appStateMap[String(rawState)] ?? 'unknown';
+  const mappedState = settings.appStateMap[String(rawState)];
+  // Game modules use different numeric state enums; ADS Running is the safe fallback.
+  const appState = mappedState ?? (instance.ampRunning === true ? 'running' : instance.ampRunning === false ? 'stopped' : 'unknown');
   const stopped = instance.ampRunning === false || appState === 'stopped';
   return {
     ...instance, appState, stale: false, updatedAt: now,

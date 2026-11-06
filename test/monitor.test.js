@@ -163,7 +163,7 @@ test('discovery deduplicates instances and telemetry distinguishes unknown from 
   const [instance] = normalizeInstances([{ InstanceID: 'game', Running: true }, { AvailableInstances: [{ InstanceID: 'game', Running: true }] }]);
   assert.equal(normalizeInstances([{ InstanceID: 'game' }, { InstanceID: 'game' }]).length, 1);
   const status = normalizeStatus(instance, { State: 10, Metrics: { 'CPU Usage': { Percent: 12 }, 'Memory Usage': { RawValue: 1024, Max: 4096, Units: 'MB' }, 'Active Users': { RawValue: 0, Max: 20 } } }, settings);
-  assert.equal(status.appState, 'unknown');
+  assert.equal(status.appState, 'running');
   assert.equal(status.players.current, 0);
   assert.equal(status.memory.unit, 'MB');
   assert.equal(normalizeStatus(instance, {}, settings).players.current, null);
@@ -197,6 +197,19 @@ test('per-instance adapters honor MaxValue, custom player metrics and state enum
   assert.deepEqual(status.players, { current: 4, max: 20 });
   assert.equal(status.memory.max, 2048);
   assert.deepEqual(status.endpoints, ['game.example:25565']);
+});
+
+test('unmapped game-specific state falls back to ADS Running without guessing enum values', () => {
+  const settings = defaults().settings.amp;
+  const factorio = normalizeStatus({ id: 'factorio', ampRunning: true, rawAppState: 0 }, { State: 20, Metrics: {} }, settings);
+  const beammp = normalizeStatus({ id: 'beammp', ampRunning: true, rawAppState: 0 }, { State: 0, Metrics: {} }, settings);
+  const unknown = normalizeStatus({ id: 'unknown', ampRunning: null }, { State: 20, Metrics: {} }, settings);
+  assert.equal(factorio.appState, 'running');
+  assert.equal(beammp.appState, 'running');
+  assert.equal(unknown.appState, 'unknown');
+  assert.equal(normalizeStatus({ id: 'stopped', ampRunning: false }, {}, settings).appState, 'stopped');
+  settings.appStateMap['20'] = 'starting';
+  assert.equal(normalizeStatus({ id: 'factorio', ampRunning: true }, { State: 20, Metrics: {} }, settings).appState, 'starting');
 });
 
 test('application-only transitions, configurable cooldown and permanent alerts', async () => {

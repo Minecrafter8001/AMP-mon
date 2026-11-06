@@ -13,12 +13,16 @@ async function inspect() {
   try {
     report.apiSpec = await client.request('Core/GetAPISpec');
     report.discovery = await client.request(config.settings.amp.discoveryMethod, config.settings.amp.discoveryParams);
+    try { report.instanceStatuses = await client.request('ADSModule/GetInstanceStatuses'); }
+    catch (error) { report.instanceStatusesErrorKind = error.kind ?? 'unknown'; }
     const instances = await client.getNetworkInstances();
     for (const instance of instances) {
       if (instance.ampRunning === false) continue;
       try {
         const route = client.childRoute(instance);
-        report.children.push({ instanceId: instance.id, status: await client.request('Core/GetStatus', {}, route.url, route.sessionUrl) });
+        const apiSpec = await client.request('Core/GetAPISpec', {}, route.url, route.sessionUrl);
+        const status = await client.request('Core/GetStatus', {}, route.url, route.sessionUrl);
+        report.children.push({ instanceId: instance.id, apiSpec, status });
       } catch (error) { report.children.push({ instanceId: instance.id, errorKind: error.kind ?? 'unknown' }); }
     }
     const secrets = [env.ampPassword, env.ampToken, ...[...client.sessions.values()].map(session => session.id)].filter(Boolean);
