@@ -25,6 +25,11 @@ export function environment({ discord = true, amp = true } = {}) {
 export function ampOptions(env, config) {
   return {
     url: env.ampUrl, username: env.ampUsername, password: env.ampPassword, token: env.ampToken,
-    settings: config.settings.amp, timeoutMs: config.settings.requestTimeoutMs
+    settings: {
+      ...config.settings.amp,
+      scheduleRefreshMs: config.settings.scheduleRefreshMs,
+      scheduleTimeZone: config.settings.scheduleTimeZone
+    },
+    timeoutMs: config.settings.requestTimeoutMs
   };
 }

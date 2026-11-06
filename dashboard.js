@@ -79,6 +79,9 @@ export function buildInstanceEmbed(instance, polledAt) {
     ? `${memory.current}${memory.max === null ? '' : ` / ${memory.max}`} ${safeText(memory.unit, 30)}` : 'Unavailable';
   const players = current && instance.players?.current !== null && instance.players?.current !== undefined
     ? `${instance.players.current}${instance.players.max === null || instance.players.max === undefined ? '' : ` / ${instance.players.max}`}` : 'Unavailable';
+  const maintenance = instance.scheduleEvents?.length
+    ? instance.scheduleEvents.slice(0, 3).map(event => `${safeText(event.label, 80)} - ${safeText(event.interval, 120)}\nNext: <t:${Math.floor(event.nextAt / 1000)}:F> (<t:${Math.floor(event.nextAt / 1000)}:R>)`).join('\n')
+    : instance.maintenanceChecked ? 'No scheduled restart or backup that stops this server.' : 'Schedule unavailable';
   return new EmbedBuilder().setTitle(safeText(instance.friendlyName ?? instance.name ?? 'Unnamed server', 256))
     .setColor(!instance.available || instance.stale ? 0xe1a526 : instance.ampRunning === false || instance.appState === 'stopped' ? 0xd54a4a : 0x239b65)
     .addFields(
@@ -86,6 +89,7 @@ export function buildInstanceEmbed(instance, polledAt) {
       { name: 'CPU', value: current && instance.cpu !== null && instance.cpu !== undefined ? `${instance.cpu}%` : 'Unavailable', inline: true },
       { name: 'RAM', value: ram, inline: true },
       { name: 'Players', value: players, inline: true },
+      { name: 'Scheduled maintenance', value: maintenance.slice(0, 1024), inline: false },
       { name: 'Host', value: safeText(instance.host?.name ?? 'Unknown') || 'Unknown', inline: true },
       { name: 'Connection endpoints', value: (instance.endpoints ?? []).map(endpointText).join('\n').slice(0, 1024) || 'Not reported by AMP' }
     ).setFooter({ text: instance.updatedAt ? `Last metrics: ${new Date(instance.updatedAt).toISOString()}` : 'No successful metrics yet' })

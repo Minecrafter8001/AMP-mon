@@ -1,3 +1,5 @@
+import { deriveScheduledEvents } from './schedule.js';
+
 /** Native AMP transport. All credentials and session tokens stay in memory. */
 export class AmpError extends Error {
   constructor(message, kind = 'api') { super(message); this.name = 'AmpError'; this.kind = kind; }
@@ -84,6 +86,7 @@ export class AmpClient {
     this.timeoutMs = timeoutMs;
     this.fetch = fetchImpl;
     this.sessions = new Map();
+    this.scheduleCache = new Map();
     this.abortController = new AbortController();
   }
 
@@ -181,11 +184,50 @@ export class AmpClient {
       appStateMap: { ...this.settings.appStateMap, ...override.appStateMap }
     };
     const input = { ...instance, rawEndpoints: override.endpoints ?? instance.rawEndpoints };
-    if (instance.ampRunning === false) return normalizeStatus(input, {}, settings);
+    if (instance.ampRunning === false) {
+      return normalizeStatus({ ...input, ...this.cachedMaintenance(instance.id) }, {}, settings);
+    }
     const route = this.childRoute(instance);
-    const status = await this.request('Core/GetStatus', {}, route.url, route.sessionUrl);
+    const [status, maintenance] = await Promise.all([
+      this.request('Core/GetStatus', {}, route.url, route.sessionUrl),
+      this.getMaintenance(instance.id, route)
+    ]);
     if (!record(status) || !record(status.Metrics)) throw new AmpError('Unsupported GetStatus response; inspect AMP metrics', 'schema');
-    return normalizeStatus(input, status, settings);
+    return normalizeStatus({ ...input, ...maintenance }, status, settings);
+  }
+
+  cachedMaintenance(instanceId, now = Date.now()) {
+    const cached = this.scheduleCache.get(instanceId);
+    if (!cached) return { scheduleEvents: [], maintenanceState: null, maintenanceChecked: false };
+    const scheduleEvents = deriveScheduledEvents(cached.scheduleData, cached.backupWillStopServer, now, this.settings.scheduleTimeZone ?? 'UTC');
+    return { scheduleEvents, maintenanceState: scheduleEvents[0]?.state ?? null, maintenanceChecked: Boolean(cached.scheduleData) };
+  }
+
+  async getMaintenance(instanceId, route, now = Date.now()) {
+    const cached = this.scheduleCache.get(instanceId);
+    const refreshMs = this.settings.scheduleRefreshMs ?? 300000;
+    if (!cached || now - cached.loadedAt >= refreshMs) {
+      const [scheduleResult, backupResult] = await Promise.allSettled([
+        this.request('Core/GetScheduleData', {}, route.url, route.sessionUrl),
+        this.request('LocalFileBackupPlugin/BackupWillStopServer', {}, route.url, route.sessionUrl)
+      ]);
+      const scheduleData = scheduleResult.status === 'fulfilled' && record(scheduleResult.value)
+        ? scheduleResult.value : cached?.scheduleData ?? null;
+      const backupWillStopServer = backupResult.status === 'fulfilled' && typeof backupResult.value === 'boolean'
+        ? backupResult.value : cached?.backupWillStopServer ?? null;
+      if (Array.isArray(scheduleData?.PopulatedTriggers)) {
+        await Promise.all(scheduleData.PopulatedTriggers.filter(trigger => trigger.TriggerType === 'TimeIntervalTrigger').map(async trigger => {
+          if (!identifier(trigger.Id)) return;
+          try {
+            trigger.interval = await this.request('Core/GetTimeIntervalTrigger', { Id: trigger.Id }, route.url, route.sessionUrl);
+          } catch {
+            // A trigger without readable recurrence data must not be assigned a guessed next time.
+          }
+        }));
+      }
+      this.scheduleCache.set(instanceId, { loadedAt: now, scheduleData, backupWillStopServer });
+    }
+    return this.cachedMaintenance(instanceId, now);
   }
 
   close() { this.abortController.abort(); }

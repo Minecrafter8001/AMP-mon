@@ -22,7 +22,29 @@ async function inspect() {
         const route = client.childRoute(instance);
         const apiSpec = await client.request('Core/GetAPISpec', {}, route.url, route.sessionUrl);
         const status = await client.request('Core/GetStatus', {}, route.url, route.sessionUrl);
-        report.children.push({ instanceId: instance.id, apiSpec, status });
+        const readOnly = async method => {
+          try { return { value: await client.request(method, {}, route.url, route.sessionUrl) }; }
+          catch (error) { return { errorKind: error.kind ?? 'unknown' }; }
+        };
+        const schedule = await readOnly('Core/GetScheduleData');
+        const backupWillStopServer = await readOnly('LocalFileBackupPlugin/BackupWillStopServer');
+        const backups = await readOnly('LocalFileBackupPlugin/GetBackups');
+        if (schedule.value?.PopulatedTriggers) {
+          for (const trigger of schedule.value.PopulatedTriggers) {
+            if (trigger.TriggerType !== 'TimeIntervalTrigger') continue;
+            try {
+              trigger.interval = await client.request('Core/GetTimeIntervalTrigger', { Id: trigger.Id }, route.url, route.sessionUrl);
+            } catch (error) {
+              trigger.intervalErrorKind = error.kind ?? 'unknown';
+            }
+          }
+        }
+        client.scheduleCache.set(instance.id, {
+          loadedAt: Date.now(),
+          scheduleData: schedule.value ?? null,
+          backupWillStopServer: backupWillStopServer.value ?? null
+        });
+        report.children.push({ instanceId: instance.id, apiSpec, status, schedule, backupWillStopServer, backups, maintenance: client.cachedMaintenance(instance.id) });
       } catch (error) { report.children.push({ instanceId: instance.id, errorKind: error.kind ?? 'unknown' }); }
     }
     const secrets = [env.ampPassword, env.ampToken, ...[...client.sessions.values()].map(session => session.id)].filter(Boolean);

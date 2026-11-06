@@ -17,6 +17,8 @@ export function defaults() {
       pollIntervalMs: 30000,
       concurrency: 4,
       requestTimeoutMs: 10000,
+      scheduleRefreshMs: 300000,
+      scheduleTimeZone: 'UTC',
       alerts: { enabled: true, retentionSeconds: 300, cooldownSeconds: 0, mode: 'either' },
       amp: {
         discoveryMethod: 'ADSModule/GetInstances',
@@ -61,6 +63,10 @@ export function validateConfig(config) {
   if (!Number.isInteger(settings.pollIntervalMs) || settings.pollIntervalMs < 30000) throw new Error('pollIntervalMs must be at least 30000');
   if (!Number.isInteger(settings.concurrency) || settings.concurrency < 1 || settings.concurrency > 32) throw new Error('concurrency must be 1..32');
   if (!Number.isInteger(settings.requestTimeoutMs) || settings.requestTimeoutMs < 1000 || settings.requestTimeoutMs > 60000) throw new Error('Invalid requestTimeoutMs');
+  if (!Number.isInteger(settings.scheduleRefreshMs) || settings.scheduleRefreshMs < 60000 || settings.scheduleRefreshMs > 86400000) throw new Error('Invalid scheduleRefreshMs');
+  if (typeof settings.scheduleTimeZone !== 'string' || !settings.scheduleTimeZone) throw new Error('Invalid scheduleTimeZone');
+  try { new Intl.DateTimeFormat('en-US', { timeZone: settings.scheduleTimeZone }); }
+  catch { throw new Error('Invalid scheduleTimeZone'); }
   const alerts = settings.alerts;
   if (typeof alerts.enabled !== 'boolean' || !['amp', 'application', 'either'].includes(alerts.mode)) throw new Error('Invalid alert policy');
   if (!(alerts.retentionSeconds === null || Number.isInteger(alerts.retentionSeconds) && alerts.retentionSeconds > 0) || !Number.isInteger(alerts.cooldownSeconds) || alerts.cooldownSeconds < 0) throw new Error('Invalid alert durations');

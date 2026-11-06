@@ -11,6 +11,8 @@
     "pollIntervalMs": 30000,
     "concurrency": 4,
     "requestTimeoutMs": 10000,
+    "scheduleRefreshMs": 300000,
+    "scheduleTimeZone": "UTC",
     "alerts": {
       "enabled": true,
       "retentionSeconds": 300,
