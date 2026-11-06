@@ -6,6 +6,123 @@ import { join } from 'node:path';
 import { ConfigStore } from '../configStore.js';
 import { defaults } from '../configStore.js';
 import { AmpClient, normalizeInstances, normalizeStatus } from '../ampClient.js';
+import { Monitor, mapLimit, playerSummary } from '../monitor.js';
+import { Dashboard, buildOverviewEmbeds, buildInstanceEmbed } from '../dashboard.js';
+import { ChannelType } from 'discord.js';
+import { commands, commandHandler } from '../commands.js';
+
+test('slash command registration and runtime handlers enforce guild administration', async () => {
+  assert.equal(commands.length, 2);
+  assert.equal(commands[1].toJSON().options[0].name, 'instance_id');
+  assert.equal(commands[1].toJSON().options[0].required, true);
+  let bound = false;
+  const handler = commandHandler({ guildId, monitor: { snapshot }, dashboard: { bind: async () => { bound = true; } }, log: quiet });
+  let response;
+  await handler({ isChatInputCommand: () => true, commandName: 'monitor-setup', guildId, memberPermissions: { has: () => false }, reply: async body => { response = body; } });
+  assert.equal(bound, false);
+  assert.ok(response.content.includes('permission'));
+});
+
+const guildId = '123456789012345678';
+const channelId = '223456789012345678';
+const snapshot = { instances: [], polledAt: Date.now(), discoveryFailed: false };
+
+function fakeDiscord() {
+  let nextId = 323456789012345678n;
+  const messages = new Map();
+  const channel = { id: channelId, guildId, type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }),
+    messages: { fetch: async id => { if (!messages.has(id)) throw Object.assign(new Error('missing'), { code: 10008 }); return messages.get(id); } },
+    send: async body => {
+      const message = { id: String(nextId++), author: { id: 'bot' }, body, edits: 0,
+        async edit(update) { this.body = update; this.edits++; }, async delete() { messages.delete(this.id); }
+      };
+      messages.set(message.id, message); return message;
+    }
+  };
+  return { messages, channel, client: { user: { id: 'bot' }, channels: { fetch: async () => channel } } };
+}
+
+test('dashboard edits stored messages and replaces only confirmed deleted messages', async () => {
+  const store = memoryStore();
+  const discord = fakeDiscord();
+  const dashboard = new Dashboard({ store, client: discord.client, guildId, log: quiet });
+  await dashboard.bind(null, channelId, snapshot);
+  const first = store.snapshot().overview.messageIds[0];
+  await dashboard.publish(snapshot);
+  assert.equal(discord.messages.get(first).edits, 1);
+  discord.messages.delete(first);
+  await dashboard.publish(snapshot);
+  const replacement = store.snapshot().overview.messageIds[0];
+  assert.notEqual(first, replacement);
+  discord.channel.messages.fetch = async () => { throw Object.assign(new Error('denied'), { code: 50013 }); };
+  await dashboard.publish(snapshot);
+  assert.equal(discord.messages.size, 1);
+  assert.equal(store.snapshot().overview.messageIds[0], replacement);
+});
+
+test('large overview pages obey embed limits and alert cleanup survives reconstruction', async () => {
+  const instances = Array.from({ length: 150 }, (_, index) => ({ id: `game-${index}`, name: 'Game'.repeat(30), host: { name: 'Remote' }, available: true, stale: false, appState: 'running', players: { current: 1 } }));
+  const embeds = buildOverviewEmbeds({ ...snapshot, instances });
+  assert.ok(embeds.length > 1);
+  for (const embed of embeds) assert.ok(embed.length < 6000 && embed.data.description.length <= 4096);
+  assert.doesNotThrow(() => buildInstanceEmbed({ id: 'game', available: false }, Date.now()).toJSON());
+  const store = memoryStore();
+  const discord = fakeDiscord();
+  let now = 1000;
+  const options = { store, client: discord.client, guildId, log: quiet, now: () => now };
+  const dashboard = new Dashboard(options);
+  await dashboard.bind(null, channelId, snapshot);
+  await dashboard.alert({ id: 'game', name: '@everyone' });
+  assert.equal(store.snapshot().pendingAlerts.length, 1);
+  assert.ok(![...discord.messages.values()].at(-1).body.content.includes('@everyone'));
+  now += 301000;
+  await new Dashboard(options).cleanupAlerts();
+  assert.equal(store.snapshot().pendingAlerts.length, 0);
+  assert.equal(discord.messages.size, 1);
+});
+
+function memoryStore() {
+  let data = defaults();
+  return { snapshot: () => structuredClone(data), update: async callback => { const next = structuredClone(data); await callback(next); data = next; }, flush: async () => {} };
+}
+const quiet = { warn() {} };
+
+test('polls do not overlap and alert only confirmed transitions, not outages or startup history', async () => {
+  const store = memoryStore();
+  await store.update(config => { config.states.game = { ampRunning: true, appState: 'running' }; });
+  let running = false;
+  let outage = false;
+  let discoveries = 0;
+  const notifications = [];
+  const monitor = new Monitor({ store, log: quiet,
+    amp: {
+      getNetworkInstances: async () => { discoveries++; if (outage) throw new Error('offline'); return [{ id: 'game', ampRunning: running, available: true }]; },
+      getInstanceStatus: async instance => ({ ...instance, appState: running ? 'running' : 'stopped', players: { current: running ? 2 : 0 }, stale: false }), close() {}
+    }, alert: async instance => notifications.push(instance.id)
+  });
+  await Promise.all([monitor.poll(), monitor.poll()]);
+  assert.equal(discoveries, 1);
+  assert.equal(notifications.length, 0);
+  running = true; await monitor.poll();
+  outage = true; await monitor.poll();
+  assert.equal(playerSummary(monitor.snapshot.instances).complete, false);
+  assert.equal(notifications.length, 0);
+  outage = false; running = false; await monitor.poll(); await monitor.poll();
+  assert.deepEqual(notifications, ['game']);
+  running = true; await monitor.poll(); running = false; await monitor.poll();
+  assert.equal(notifications.length, 2);
+});
+
+test('bounded workers and partial aggregation exclude stale player counts', async () => {
+  let active = 0;
+  let peak = 0;
+  await mapLimit([1, 2, 3, 4, 5], 2, async value => { active++; peak = Math.max(peak, active); await Promise.resolve(); active--; return value; });
+  assert.equal(peak, 2);
+  assert.deepEqual(playerSummary([
+    { available: true, stale: false, players: { current: 3 } },
+    { available: true, stale: true, players: { current: 10 } }
+  ]), { total: 3, known: 1, count: 2, complete: false });
+});
 
 const jsonResponse = (value, status = 200) => new Response(JSON.stringify(value), { status });
 
