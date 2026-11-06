@@ -16,7 +16,7 @@ test('slash command registration and runtime handlers enforce guild administrati
   assert.equal(commands.length, 1);
   assert.equal(commands[0].name, 'monitor');
   const subcommands = commands[0].toJSON().options;
-  assert.deepEqual(subcommands.map(command => command.name), ['setup', 'add', 'hide', 'show', 'address', 'remove-channel']);
+  assert.deepEqual(subcommands.map(command => command.name), ['setup', 'add', 'hide', 'show', 'address', 'alerts', 'schedule', 'remove-channel']);
   assert.equal(subcommands.find(command => command.name === 'add').options[0].autocomplete, true);
   let bound = false;
   const handler = commandHandler({ guildId, monitor: { snapshot }, dashboard: { bind: async () => { bound = true; } }, log: quiet });

@@ -204,6 +204,7 @@ export class AmpClient {
   }
 
   cachedMaintenance(instanceId, now = Date.now()) {
+    if (this.settings.scheduleAutoDetect === false) return { scheduleEvents: [], maintenanceState: null, maintenanceChecked: false };
     const cached = this.scheduleCache.get(instanceId);
     if (!cached) return { scheduleEvents: [], maintenanceState: null, maintenanceChecked: false };
     const scheduleEvents = deriveScheduledEvents(cached.scheduleData, cached.backupWillStopServer, now, this.settings.scheduleTimeZone ?? 'UTC');
@@ -211,6 +212,7 @@ export class AmpClient {
   }
 
   async getMaintenance(instanceId, route, now = Date.now()) {
+    if (this.settings.scheduleAutoDetect === false) return this.cachedMaintenance(instanceId, now);
     const cached = this.scheduleCache.get(instanceId);
     const refreshMs = this.settings.scheduleRefreshMs ?? 300000;
     if (!cached || now - cached.loadedAt >= refreshMs) {

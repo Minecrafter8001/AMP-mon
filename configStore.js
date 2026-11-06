@@ -19,7 +19,8 @@ export function defaults() {
       requestTimeoutMs: 10000,
       scheduleRefreshMs: 300000,
       scheduleTimeZone: 'UTC',
-      alerts: { enabled: true, retentionSeconds: 300, cooldownSeconds: 0, mode: 'either' },
+      scheduleAutoDetect: true,
+      alerts: { enabled: true, retentionSeconds: 300, cooldownSeconds: 0, mode: 'either', scheduleWindowSeconds: 300, instanceRouting: {} },
       amp: {
         discoveryMethod: 'ADSModule/GetInstances',
         discoveryParams: {},
@@ -74,9 +75,12 @@ export function validateConfig(config) {
   if (typeof settings.scheduleTimeZone !== 'string' || !settings.scheduleTimeZone) throw new Error('Invalid scheduleTimeZone');
   try { new Intl.DateTimeFormat('en-US', { timeZone: settings.scheduleTimeZone }); }
   catch { throw new Error('Invalid scheduleTimeZone'); }
+  if (typeof settings.scheduleAutoDetect !== 'boolean') throw new Error('Invalid scheduleAutoDetect');
   const alerts = settings.alerts;
   if (typeof alerts.enabled !== 'boolean' || !['amp', 'application', 'either'].includes(alerts.mode)) throw new Error('Invalid alert policy');
   if (!(alerts.retentionSeconds === null || Number.isInteger(alerts.retentionSeconds) && alerts.retentionSeconds > 0) || !Number.isInteger(alerts.cooldownSeconds) || alerts.cooldownSeconds < 0) throw new Error('Invalid alert durations');
+  if (!Number.isInteger(alerts.scheduleWindowSeconds) || alerts.scheduleWindowSeconds < 0 || alerts.scheduleWindowSeconds > 86400) throw new Error('Invalid scheduleWindowSeconds');
+  if (!object(alerts.instanceRouting) || !Object.entries(alerts.instanceRouting).every(([id, routing]) => /^[\w-]+$/.test(id) && object(routing) && typeof routing.overview === 'boolean' && typeof routing.instance === 'boolean')) throw new Error('Invalid instance alert routing');
   const amp = settings.amp;
   if (!/^[\w]+\/[\w]+$/.test(amp.discoveryMethod) || !object(amp.discoveryParams) || !object(amp.instanceOverrides) || !object(amp.metricKeys) || !object(amp.appStateMap)) throw new Error('Invalid AMP adapter settings');
   if (!['login', 'root'].includes(amp.childSession) || typeof amp.proxyPathTemplate !== 'string' || !amp.proxyPathTemplate.includes('{instanceId}')) throw new Error('Invalid AMP child routing settings');
@@ -89,6 +93,7 @@ export function validateConfig(config) {
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid AMP override URL');
     }
     if (override.endpoints !== undefined && (!Array.isArray(override.endpoints) || override.endpoints.length > 10 || !override.endpoints.every(value => typeof value === 'string' && value.length > 0 && value.length <= 180 && !/[\r\n]/.test(value)))) throw new Error('Invalid override endpoints');
+    if (override.scheduleText !== undefined && (typeof override.scheduleText !== 'string' || !override.scheduleText.trim() || override.scheduleText.length > 1000)) throw new Error('Invalid override schedule text');
     if (override.metricKeys !== undefined && (!object(override.metricKeys) || !Object.values(override.metricKeys).every(value => typeof value === 'string' && value.length > 0))) throw new Error('Invalid override metric keys');
     if (override.appStateMap !== undefined && (!object(override.appStateMap) || !Object.values(override.appStateMap).every(value => ['running', 'stopped', 'starting', 'stopping', 'restarting', 'unknown'].includes(value)))) throw new Error('Invalid override application states');
   }

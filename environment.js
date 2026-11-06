@@ -28,7 +28,8 @@ export function ampOptions(env, config) {
     settings: {
       ...config.settings.amp,
       scheduleRefreshMs: config.settings.scheduleRefreshMs,
-      scheduleTimeZone: config.settings.scheduleTimeZone
+      scheduleTimeZone: config.settings.scheduleTimeZone,
+      scheduleAutoDetect: config.settings.scheduleAutoDetect
     },
     timeoutMs: config.settings.requestTimeoutMs
   };

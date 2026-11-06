@@ -16,12 +16,19 @@ export const commands = [
     .addSubcommand(subcommand => subcommand.setName('address').setDescription('Set manual connection addresses')
       .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
       .addStringOption(option => option.setName('addresses').setDescription('One address per line, or clear to remove them').setRequired(true).setMaxLength(1000)))
+    .addSubcommand(subcommand => subcommand.setName('alerts').setDescription('Configure alert destinations for a server')
+      .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
+      .addBooleanOption(option => option.setName('overview').setDescription('Send alerts to overview channels').setRequired(true))
+      .addBooleanOption(option => option.setName('instance').setDescription('Send alerts to server status channels').setRequired(true)))
+    .addSubcommand(subcommand => subcommand.setName('schedule').setDescription('Set custom maintenance schedule text')
+      .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
+      .addStringOption(option => option.setName('text').setDescription('Schedule text, or clear to remove the override').setRequired(true).setMaxLength(1000)))
     .addSubcommand(subcommand => subcommand.setName('remove-channel').setDescription('Remove an overview or instance dashboard from a channel')
       .addChannelOption(option => option.setName('channel').setDescription('Channel to remove; defaults to this channel').addChannelTypes(ChannelType.GuildText))
       .addStringOption(option => option.setName('instance_name').setDescription('Instance name; omit for the network overview').setAutocomplete(true).setMaxLength(100)))
 ];
 
-const instanceCommands = new Set(['add', 'hide', 'show', 'address', 'remove-channel']);
+const instanceCommands = new Set(['add', 'hide', 'show', 'address', 'alerts', 'schedule', 'remove-channel']);
 
 export function parseManualAddresses(input) {
   if (typeof input !== 'string') throw new Error('Addresses must be text.');
@@ -106,6 +113,21 @@ export function commandHandler({ guildId, monitor, dashboard, store, log = conso
       if (!snapshot || snapshot.discoveryFailed) throw new Error('AMP discovery is unavailable; try again after connectivity is restored.');
       if (instanceCommands.has(subcommand)) {
         const instance = resolveInstance(snapshot, interaction.options.getString('instance_name', true));
+        if (subcommand === 'alerts') {
+          const overview = interaction.options.getBoolean('overview', true);
+          const instanceChannel = interaction.options.getBoolean('instance', true);
+          await store.update(config => { config.settings.alerts.instanceRouting[instance.id] = { overview, instance: instanceChannel }; });
+          await interaction.editReply({ content: `Alert destinations updated: overview ${overview ? 'on' : 'off'}, server channels ${instanceChannel ? 'on' : 'off'}.`, allowedMentions: { parse: [] } });
+          return;
+        }
+        if (subcommand === 'schedule') {
+          const text = interaction.options.getString('text', true).trim();
+          if (!text) throw new Error('Schedule text cannot be empty.');
+          const scheduleText = /^clear$/i.test(text) ? null : text;
+          await dashboard.setManualSchedule(instance.id, scheduleText, snapshot);
+          await interaction.editReply({ content: scheduleText === null ? 'Custom schedule cleared.' : 'Custom schedule updated.', allowedMentions: { parse: [] } });
+          return;
+        }
         if (subcommand === 'hide' || subcommand === 'show') {
           const hidden = subcommand === 'hide';
           await dashboard.setHidden(instance.id, hidden, snapshot);
@@ -136,7 +158,7 @@ export function commandHandler({ guildId, monitor, dashboard, store, log = conso
     } catch (error) {
       log.warn('Monitor configuration command failed', { command: interaction.commandName });
       // Only controlled validation messages are exposed; transport payloads are never relayed.
-      const content = error.name === 'Error' && /^(Choose |Unknown AMP instance name|That AMP instance name|AMP discovery|Bot needs|Dashboard needs|Addresses )/.test(error.message)
+      const content = error.name === 'Error' && /^(Choose |Unknown AMP instance name|That AMP instance name|AMP discovery|Bot needs|Dashboard needs|Addresses |Schedule text )/.test(error.message)
         ? error.message : 'Dashboard setup failed. Check bot channel permissions and the operator logs.';
       try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content, allowedMentions: { parse: [] } });

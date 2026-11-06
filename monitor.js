@@ -34,6 +34,7 @@ export class Monitor extends EventEmitter {
     this.snapshot = null;
     this.history = new Map();
     this.lastAlerts = new Map();
+    this.scheduledEvents = new Map();
     this.task = null;
     this.timer = null;
     this.stopping = false;
@@ -76,6 +77,11 @@ export class Monitor extends EventEmitter {
     const notifications = [];
     for (const instance of instances) {
       if (!instance.available) continue;
+      const windowMs = config.settings.alerts.scheduleWindowSeconds * 1000;
+      const events = (config.settings.scheduleAutoDetect ? [...(this.scheduledEvents.get(instance.id) ?? []), ...(instance.scheduleEvents ?? [])] : [])
+        .filter(event => Number.isFinite(event.nextAt) && event.nextAt >= timestamp - windowMs);
+      const uniqueEvents = [...new Map(events.map(event => [`${event.nextAt}:${event.state}`, event])).values()];
+      this.scheduledEvents.set(instance.id, uniqueEvents);
       const previous = this.history.get(instance.id);
       const current = { ...previous };
       if (instance.ampRunning !== null && instance.ampRunning !== undefined) current.ampRunning = instance.ampRunning;
@@ -88,7 +94,9 @@ export class Monitor extends EventEmitter {
         this.emit('transition', { instanceId: instance.id, ampStopped, appStopped });
         const lastAlert = this.lastAlerts.get(instance.id) ?? -Infinity;
         if (policy.enabled && timestamp - lastAlert >= policy.cooldownSeconds * 1000) {
-          notifications.push(instance);
+          const scheduled = uniqueEvents.filter(event => Math.abs(event.nextAt - timestamp) <= windowMs)
+            .sort((first, second) => Math.abs(first.nextAt - timestamp) - Math.abs(second.nextAt - timestamp))[0] ?? null;
+          notifications.push({ instance, scheduled });
           this.lastAlerts.set(instance.id, timestamp);
         }
       }
@@ -99,9 +107,9 @@ export class Monitor extends EventEmitter {
     await this.store.update(data => {
       data.states = Object.fromEntries([...this.history].map(([id, state]) => [id, state]));
     });
-    for (const instance of notifications) {
-      try { await this.alert(instance); }
-      catch { this.log.warn('Downtime alert could not be published', { instanceId: instance.id }); }
+    for (const notification of notifications) {
+      try { await this.alert(notification.instance, notification.scheduled); }
+      catch { this.log.warn('Downtime alert could not be published', { instanceId: notification.instance.id }); }
     }
     await this.deliver();
     return this.snapshot;

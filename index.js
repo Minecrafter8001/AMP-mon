@@ -17,7 +17,7 @@ async function main() {
   const client = new Client({ intents: [GatewayIntentBits.Guilds], allowedMentions: { parse: [] } });
   const amp = new AmpClient(ampOptions(env, config));
   const dashboard = new Dashboard({ client, store, guildId: env.guildId });
-  const monitor = new Monitor({ amp, store, publish: snapshot => dashboard.publish(snapshot), alert: instance => dashboard.alert(instance) });
+  const monitor = new Monitor({ amp, store, publish: snapshot => dashboard.publish(snapshot), alert: (instance, scheduled) => dashboard.alert(instance, scheduled) });
   let stopping = false;
   async function shutdown() {
     if (stopping) return;

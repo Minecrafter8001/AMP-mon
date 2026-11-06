@@ -13,11 +13,14 @@
     "requestTimeoutMs": 10000,
     "scheduleRefreshMs": 300000,
     "scheduleTimeZone": "UTC",
+    "scheduleAutoDetect": true,
     "alerts": {
       "enabled": true,
       "retentionSeconds": 300,
       "cooldownSeconds": 0,
-      "mode": "either"
+      "mode": "either",
+      "scheduleWindowSeconds": 300,
+      "instanceRouting": {}
     },
     "amp": {
       "discoveryMethod": "ADSModule/GetInstances",

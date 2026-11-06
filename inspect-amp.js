@@ -26,9 +26,9 @@ async function inspect() {
           try { return { value: await client.request(method, {}, route.url, route.sessionUrl) }; }
           catch (error) { return { errorKind: error.kind ?? 'unknown' }; }
         };
-        const schedule = await readOnly('Core/GetScheduleData');
-        const backupWillStopServer = await readOnly('LocalFileBackupPlugin/BackupWillStopServer');
-        const backups = await readOnly('LocalFileBackupPlugin/GetBackups');
+        const schedule = config.settings.scheduleAutoDetect ? await readOnly('Core/GetScheduleData') : { disabled: true };
+        const backupWillStopServer = config.settings.scheduleAutoDetect ? await readOnly('LocalFileBackupPlugin/BackupWillStopServer') : { disabled: true };
+        const backups = config.settings.scheduleAutoDetect ? await readOnly('LocalFileBackupPlugin/GetBackups') : { disabled: true };
         if (schedule.value?.PopulatedTriggers) {
           for (const trigger of schedule.value.PopulatedTriggers) {
             if (trigger.TriggerType !== 'TimeIntervalTrigger') continue;

@@ -88,7 +88,8 @@ export function buildInstanceEmbed(instance, polledAt) {
     { name: 'Players', value: players, inline: true }
   ];
   let maintenance = '';
-  const events = instance.scheduleEvents ?? [];
+  const manualScheduleText = instance.manualScheduleText;
+  const events = manualScheduleText ? [] : instance.scheduleEvents ?? [];
   let displayed = 0;
   for (const event of events) {
     const line = `${safeText(event.label, 80)} - ${safeText(event.interval, 120)}\nNext: <t:${Math.floor(event.nextAt / 1000)}:F> (<t:${Math.floor(event.nextAt / 1000)}:R>)`;
@@ -102,6 +103,7 @@ export function buildInstanceEmbed(instance, polledAt) {
   }
   if (displayed < events.length && maintenance) maintenance += `\n${events.length - displayed} more schedules`;
   else if (displayed < events.length) fields.at(-1).value += `\n${events.length - displayed} more schedules`;
+  if (manualScheduleText) maintenance = manualScheduleText.split(/\r?\n/).map(line => safeText(line, 1000)).join('\n').slice(0, 1024);
   if (maintenance) fields.push({ name: 'Scheduled maintenance', value: maintenance, inline: false });
   if (addresses.length) fields.push({ name: 'Addresses:', value: addresses.join('\n').slice(0, 1024), inline: false });
   return new EmbedBuilder().setTitle(safeText(instance.friendlyName ?? instance.name ?? 'Unnamed server', 256))
@@ -187,7 +189,9 @@ export class Dashboard {
     const ampSettings = config.settings.amp;
     const reported = instance.reportedEndpoints ?? normalizeEndpoints(instance.rawEndpoints ?? instance.endpoints);
     const endpoints = ampSettings.instanceOverrides[id]?.endpoints ?? (ampSettings.useReportedEndpoints ? reported : []);
-    return [buildInstanceEmbed({ ...instance, endpoints }, snapshot.polledAt)];
+    const manualScheduleText = ampSettings.instanceOverrides[id]?.scheduleText;
+    const scheduleEvents = config.settings.scheduleAutoDetect ? instance.scheduleEvents : [];
+    return [buildInstanceEmbed({ ...instance, endpoints, manualScheduleText, scheduleEvents }, snapshot.polledAt)];
   }
 
   publish(snapshot) {
@@ -265,19 +269,44 @@ export class Dashboard {
     await this.publish(snapshot);
   }
 
-  alert(instance) {
+  async setManualSchedule(instanceId, scheduleText, snapshot) {
+    await this.store.update(config => {
+      const overrides = config.settings.amp.instanceOverrides;
+      if (scheduleText === null) {
+        if (!overrides[instanceId]) return;
+        delete overrides[instanceId].scheduleText;
+        if (Object.keys(overrides[instanceId]).length === 0) delete overrides[instanceId];
+      } else {
+        (overrides[instanceId] ??= {}).scheduleText = scheduleText;
+      }
+    });
+    await this.publish(snapshot);
+  }
+
+  alert(instance, scheduled = null) {
     return this.serial(async () => {
       const config = this.store.snapshot();
-      if (!config.settings.alerts.enabled || config.hiddenInstances.includes(instance.id)) return;
-      for (const mapping of config.overview) {
+      if (!config.settings.alerts.enabled) return;
+      const routing = config.settings.alerts.instanceRouting[instance.id] ?? { overview: true, instance: false };
+      const channels = new Set();
+      if (routing.overview && !config.hiddenInstances.includes(instance.id)) {
+        for (const mapping of config.overview) channels.add(mapping.channelId);
+      }
+      if (routing.instance) {
+        for (const mapping of config.instances[instance.id] ?? []) channels.add(mapping.channelId);
+      }
+      const name = safeText(instance.friendlyName ?? instance.name, 120);
+      const activity = scheduled?.state === 'scheduled-backup' ? 'scheduled backup' : 'scheduled restart';
+      const content = scheduled ? `${name} is down for ${activity}.` : `Downtime detected: ${name} is stopped.`;
+      for (const channelId of channels) {
         try {
-          const channel = await this.channel(mapping.channelId);
-          const message = await channel.send({ content: `Downtime detected: ${safeText(instance.name, 120)} is stopped.`, allowedMentions: { parse: [] } });
+          const channel = await this.channel(channelId);
+          const message = await channel.send({ content, allowedMentions: { parse: [] } });
           const retention = config.settings.alerts.retentionSeconds;
           if (retention !== null) await this.store.update(data => {
             data.pendingAlerts.push({ channelId: channel.id, messageId: message.id, deleteAt: this.now() + retention * 1000 });
           });
-        } catch { this.log.warn('Downtime alert could not be published', { channelId: mapping.channelId }); }
+        } catch { this.log.warn('Downtime alert could not be published', { channelId }); }
       }
     });
   }
