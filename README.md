@@ -2,6 +2,14 @@
 
 AMP-mon monitors a CubeCoders AMP network with a Discord overview and optional per-server dashboards.
 
+### screenshots: 
+
+<img width="289" height="158" alt="image" src="https://github.com/user-attachments/assets/59261797-cf56-4b0b-8e57-c19f772675ff"/> 
+<img width="245" height="185" alt="image" src="https://github.com/user-attachments/assets/bc5c3452-2eef-4c26-8b64-9d034f8fa940" />
+
+
+
+
 ## Requirements
 
 - Node.js 24 or newer and npm.
