@@ -10,6 +10,7 @@ import { Monitor, mapLimit, playerSummary } from '../monitor.js';
 import { Dashboard, buildOverviewEmbeds, buildInstanceEmbed } from '../dashboard.js';
 import { ChannelType } from 'discord.js';
 import { commands, commandHandler } from '../commands.js';
+import { registerCommands } from '../commandRegistration.js';
 
 test('slash command registration and runtime handlers enforce guild administration', async () => {
   assert.equal(commands.length, 4);
@@ -382,4 +383,26 @@ test('hide/show commands persist visibility and update overview totals but retai
   const overviewAfterShow = JSON.stringify(discord.messages.get(overviewId).body.embeds[0].data);
   assert.match(overviewAfterShow, /Factorio/);
   assert.match(overviewAfterShow, /5 players online/);
+});
+
+test('command deployment updates existing commands and creates only missing commands', async () => {
+  const calls = [];
+  const routes = {
+    applicationGuildCommands: (client, guild) => `collection:${client}:${guild}`,
+    applicationGuildCommand: (client, guild, id) => `command:${client}:${guild}:${id}`
+  };
+  const existing = [{ id: 'existing-setup', name: 'monitor-setup', type: 1 }, { id: 'existing-add', name: 'monitor-add', type: 1 }, { id: 'unrelated', name: 'help', type: 1 }];
+  const rest = {
+    async get(route) { calls.push(['get', route]); return existing; },
+    async put(route, options) { calls.push(['put', route, options.body.name]); },
+    async post(route, options) { calls.push(['post', route, options.body.name]); }
+  };
+  await registerCommands({ rest, clientId: 'client', guildId: 'guild', commands, routes });
+  assert.deepEqual(calls, [
+    ['get', 'collection:client:guild'],
+    ['put', 'command:client:guild:existing-setup', 'monitor-setup'],
+    ['put', 'command:client:guild:existing-add', 'monitor-add'],
+    ['post', 'collection:client:guild', 'monitor-hide'],
+    ['post', 'collection:client:guild', 'monitor-show']
+  ]);
 });

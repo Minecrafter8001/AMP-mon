@@ -1,15 +1,20 @@
 import { REST, Routes } from 'discord.js';
 import { commands } from './commands.js';
 import { environment } from './environment.js';
+import { registerCommands } from './commandRegistration.js';
 
-/** Register only these two named commands, preserving unrelated commands in the app. */
+/** Upsert this bot's guild commands without replacing unrelated application commands. */
 try {
   const env = environment({ amp: false });
   const rest = new REST({ version: '10' }).setToken(env.discordToken);
-  const route = Routes.applicationGuildCommands(env.clientId, env.guildId);
-  for (const command of commands) await rest.post(route, { body: command.toJSON() });
-  console.info('Registered monitor-setup and monitor-add in the configured guild.');
+  await registerCommands({ rest, clientId: env.clientId, guildId: env.guildId, commands, routes: Routes });
+  console.info(`Registered or updated ${commands.length} monitor commands in the configured guild.`);
 } catch (error) {
-  console.error(error.message.startsWith('Missing ') || error.message.startsWith('Invalid ') || error.message.startsWith('Node.js') ? error.message : 'Command registration failed; check Discord credentials and application scope.');
+  const detail = error.message.startsWith('Missing ') || error.message.startsWith('Invalid ') || error.message.startsWith('Node.js')
+    ? error.message
+    : error.status
+      ? `Discord API returned HTTP ${error.status}${error.code ? ` (code ${error.code})` : ''}: ${error.rawError?.message ?? 'request rejected'}`
+      : 'Command registration failed before Discord accepted the request; check credentials and connectivity.';
+  console.error(detail);
   process.exitCode = 1;
 }
