@@ -38,7 +38,8 @@ export function normalizeInstances(response) {
       if (/^ADS(?:Module)?$/i.test(module)) continue;
       instances.set(entry.InstanceID, {
         id: entry.InstanceID,
-        name: String(entry.FriendlyName ?? entry.DisplayName ?? entry.InstanceName ?? entry.InstanceID),
+        // Prefer AMP's raw instance name over display-oriented friendly labels.
+        name: String(entry.InstanceName ?? entry.Name ?? entry.FriendlyName ?? entry.DisplayName ?? 'Unnamed instance'),
         module,
         host,
         ampRunning: typeof entry.Running === 'boolean' ? entry.Running : null,

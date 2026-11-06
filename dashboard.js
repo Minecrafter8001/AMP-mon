@@ -27,7 +27,7 @@ export function buildOverviewEmbeds(snapshot) {
   const heading = `Online players: **${summary.total}**${summary.complete ? '' : ` (partial: ${summary.known}/${summary.count} readings)`}\n${snapshot.discoveryFailed ? 'Controller discovery unavailable; cached layout shown.\n' : ''}`;
   const lines = [...snapshot.instances].sort((first, second) => `${first.host?.name}/${first.name}/${first.id}`.localeCompare(`${second.host?.name}/${second.name}/${second.id}`)).map(instance => {
     const players = !instance.available || instance.stale ? '?' : instance.players?.current ?? '?';
-    return `**${safeText(instance.name, 80)}** | ${safeText(instance.host?.name ?? 'Local', 60)} | ${stateText(instance)} | players ${players}\nID: ${safeText(instance.id, 90)}`;
+    return `**${safeText(instance.name, 80)}** | ${safeText(instance.host?.name ?? 'Local', 60)} | ${stateText(instance)} | players ${players}`;
   });
   if (!lines.length) lines.push(snapshot.discoveryFailed ? 'No cached instances available.' : 'No managed game instances discovered.');
   const pages = [];
@@ -53,7 +53,7 @@ export function buildInstanceEmbed(instance, polledAt) {
     ? `${memory.current}${memory.max === null ? '' : ` / ${memory.max}`} ${safeText(memory.unit, 30)}` : 'Unavailable';
   const players = current && instance.players?.current !== null && instance.players?.current !== undefined
     ? `${instance.players.current}${instance.players.max === null || instance.players.max === undefined ? '' : ` / ${instance.players.max}`}` : 'Unavailable';
-  return new EmbedBuilder().setTitle(safeText(instance.name ?? instance.id, 256))
+  return new EmbedBuilder().setTitle(safeText(instance.name ?? 'Unnamed instance', 256))
     .setColor(!instance.available || instance.stale ? 0xe1a526 : instance.ampRunning === false || instance.appState === 'stopped' ? 0xd54a4a : 0x239b65)
     .addFields(
       { name: 'Execution state', value: stateText(instance), inline: true },
@@ -62,7 +62,7 @@ export function buildInstanceEmbed(instance, polledAt) {
       { name: 'Players', value: players, inline: true },
       { name: 'Host', value: safeText(instance.host?.name ?? 'Unknown') || 'Unknown', inline: true },
       { name: 'Connection endpoints', value: (instance.endpoints ?? []).map(endpointText).join('\n').slice(0, 1024) || 'Not reported by AMP' }
-    ).setFooter({ text: `InstanceID: ${safeText(instance.id, 100)} | ${instance.updatedAt ? `Last metrics: ${new Date(instance.updatedAt).toISOString()}` : 'No successful metrics yet'}` })
+    ).setFooter({ text: instance.updatedAt ? `Last metrics: ${new Date(instance.updatedAt).toISOString()}` : 'No successful metrics yet' })
     .setTimestamp(polledAt);
 }
 
@@ -174,7 +174,7 @@ export class Dashboard {
       const config = this.store.snapshot();
       if (!config.overview || !config.settings.alerts.enabled) return;
       const channel = await this.channel(config.overview.channelId);
-      const message = await channel.send({ content: `Downtime detected: ${safeText(instance.name, 120)} (${safeText(instance.id, 90)}) is stopped.`, allowedMentions: { parse: [] } });
+      const message = await channel.send({ content: `Downtime detected: ${safeText(instance.name, 120)} is stopped.`, allowedMentions: { parse: [] } });
       const retention = config.settings.alerts.retentionSeconds;
       if (retention !== null) await this.store.update(data => {
         data.pendingAlerts.push({ channelId: channel.id, messageId: message.id, deleteAt: this.now() + retention * 1000 });

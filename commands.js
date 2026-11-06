@@ -7,7 +7,7 @@ export const commands = [
     .addChannelOption(option => option.setName('channel').setDescription('Dashboard text channel').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('monitor-add').setDescription('Track one AMP instance in a text channel')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(option => option.setName('instance_id').setDescription('Exact AMP internal InstanceID, not its display name').setRequired(true).setMaxLength(100))
+    .addStringOption(option => option.setName('instance_name').setDescription('Exact AMP instance name, not its friendly display name').setRequired(true).setMaxLength(100))
     .addChannelOption(option => option.setName('channel').setDescription('Tracking text channel').addChannelTypes(ChannelType.GuildText))
 ];
 
@@ -25,14 +25,20 @@ export function commandHandler({ guildId, monitor, dashboard, log = console }) {
       await dashboard.channel(channel.id);
       const snapshot = monitor.snapshot && !monitor.snapshot.discoveryFailed ? monitor.snapshot : await monitor.poll();
       if (!snapshot || snapshot.discoveryFailed) throw new Error('AMP discovery is unavailable; try again after connectivity is restored.');
-      const id = interaction.commandName === 'monitor-add' ? interaction.options.getString('instance_id', true) : null;
-      if (id !== null && !snapshot.instances.some(instance => instance.id === id && instance.available)) throw new Error('Unknown InstanceID. Use the exact internal key of a currently discovered AMP instance.');
-      await dashboard.bind(id, channel.id, snapshot);
-      await interaction.editReply({ content: `Dashboard configured in <#${channel.id}>.${id && snapshot.instances.find(instance => instance.id === id)?.stale ? ' Metrics are currently unavailable for this instance; check AMP permissions and routing.' : ''}`, allowedMentions: { parse: [] } });
+      let instance = null;
+      if (interaction.commandName === 'monitor-add') {
+        const name = interaction.options.getString('instance_name', true);
+        const matches = snapshot.instances.filter(value => value.name === name && value.available);
+        if (matches.length === 0) throw new Error('Unknown AMP instance name. Use the exact non-friendly instance name shown in the overview.');
+        if (matches.length > 1) throw new Error('That AMP instance name is ambiguous. Give the instances unique names in AMP, then try again.');
+        [instance] = matches;
+      }
+      await dashboard.bind(instance?.id ?? null, channel.id, snapshot);
+      await interaction.editReply({ content: `Dashboard configured in <#${channel.id}>.${instance?.stale ? ' Metrics are currently unavailable for this instance; check AMP permissions and routing.' : ''}`, allowedMentions: { parse: [] } });
     } catch (error) {
       log.warn('Monitor configuration command failed', { command: interaction.commandName });
       // Only controlled validation messages are exposed; transport payloads are never relayed.
-      const content = error.name === 'Error' && /^(Choose |Unknown InstanceID|AMP discovery|Bot needs|Dashboard needs)/.test(error.message)
+      const content = error.name === 'Error' && /^(Choose |Unknown AMP instance name|That AMP instance name|AMP discovery|Bot needs|Dashboard needs)/.test(error.message)
         ? error.message : 'Dashboard setup failed. Check bot channel permissions and the operator logs.';
       try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content, allowedMentions: { parse: [] } });

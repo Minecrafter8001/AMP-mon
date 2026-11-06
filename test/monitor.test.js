@@ -13,7 +13,7 @@ import { commands, commandHandler } from '../commands.js';
 
 test('slash command registration and runtime handlers enforce guild administration', async () => {
   assert.equal(commands.length, 2);
-  assert.equal(commands[1].toJSON().options[0].name, 'instance_id');
+  assert.equal(commands[1].toJSON().options[0].name, 'instance_name');
   assert.equal(commands[1].toJSON().options[0].required, true);
   let bound = false;
   const handler = commandHandler({ guildId, monitor: { snapshot }, dashboard: { bind: async () => { bound = true; } }, log: quiet });
@@ -267,4 +267,30 @@ test('malformed existing configuration is not overwritten', async () => {
 test('documented configuration example is valid and matches generated defaults', async () => {
   const example = JSON.parse(await readFile(new URL('../config.example.json', import.meta.url), 'utf8'));
   assert.deepEqual(validateConfig(example), defaults());
+});
+
+test('overview and instance embeds display names but never the internal AMP key', () => {
+  const instance = { id: 'secret-internal-guid', name: 'Minecraft_01', host: { name: 'Node A' }, available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 2, max: 10 }, memory: { current: 4, max: 8, unit: 'GB' }, cpu: 20, endpoints: [], updatedAt: Date.now() };
+  const overviewText = buildOverviewEmbeds({ ...snapshot, instances: [instance] }).map(embed => embed.toJSON()).map(embed => `${embed.title}\n${embed.description}\n${embed.footer?.text}`).join('\n');
+  const instanceText = JSON.stringify(buildInstanceEmbed(instance, Date.now()).toJSON());
+  assert.ok(overviewText.includes('Minecraft'));
+  assert.ok(instanceText.includes('Minecraft'));
+  assert.doesNotMatch(overviewText, /secret-internal-guid|InstanceID/);
+  assert.doesNotMatch(instanceText, /secret-internal-guid|InstanceID/);
+});
+
+test('monitor-add resolves exact non-friendly instance name and keeps its ID internal', async () => {
+  const instance = { id: 'internal-id-123', name: 'Minecraft_01', available: true };
+  let boundId;
+  const handler = commandHandler({ guildId, monitor: { snapshot: { ...snapshot, instances: [instance] } }, dashboard: { channel: async () => ({}), bind: async id => { boundId = id; } }, log: quiet });
+  const replies = [];
+  const interaction = {
+    isChatInputCommand: () => true, commandName: 'monitor-add', guildId,
+    memberPermissions: { has: () => true }, channel: { id: channelId, guildId, type: ChannelType.GuildText },
+    options: { getChannel: () => null, getString: name => { assert.equal(name, 'instance_name'); return 'Minecraft_01'; } },
+    async deferReply() {}, async editReply(response) { replies.push(response); }
+  };
+  await handler(interaction);
+  assert.equal(boundId, instance.id);
+  assert.doesNotMatch(replies[0].content, /internal-id-123|InstanceID/);
 });
