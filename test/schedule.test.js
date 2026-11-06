@@ -77,3 +77,48 @@ test('AMP schedule reads are cached and verified maintenance survives a stop', a
   assert.equal(stopped.maintenanceState, 'scheduled-backup-and-restart');
   client.close();
 });
+
+test('complementary daily backup and restart triggers form one four-hour cadence', () => {
+  const restart = { TaskMethodName: 'Event.GenericModule.Restart', EnabledState: 1, Order: 10 };
+  const backup = { TaskMethodName: 'Event.LocalFileBackupPlugin.TakeBackup', EnabledState: 1, Order: 20 };
+  const trigger = (hours, tasks) => ({ TriggerType: 'TimeIntervalTrigger', EnabledState: 1, Tasks: tasks, interval: {
+    EnabledState: 1, MatchMonths: [], MatchDays: [], MatchHours: hours, MatchMinutes: [0], MatchDaysOfMonth: []
+  } });
+  const schedule = { PopulatedTriggers: [trigger([0, 4, 8, 12, 16], [restart]), trigger([20], [restart, backup])] };
+  const events = deriveScheduledEvents(schedule, true, Date.parse('2026-11-06T18:30:00Z'));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].label, 'Scheduled restart');
+  assert.equal(events[0].interval, 'Every 4 hours (UTC)');
+  assert.equal(events[0].nextAt, Date.parse('2026-11-06T20:00:00Z'));
+  schedule.PopulatedTriggers.push(trigger([1], [restart]));
+  const withAdditional = deriveScheduledEvents(schedule, true, Date.parse('2026-11-06T18:30:00Z'));
+  assert.equal(withAdditional.length, 2);
+  assert.ok(withAdditional.some(event => event.interval === 'Every 4 hours (UTC)'));
+  assert.ok(withAdditional.some(event => event.interval === 'Daily at 01:00 UTC'));
+});
+
+test('duplicate intervals merge, while irregular and differently restricted schedules stay distinct', () => {
+  const restart = { TaskMethodName: 'Event.GenericModule.Restart', EnabledState: 1, Order: 10 };
+  const trigger = (hours, days = []) => ({ TriggerType: 'TimeIntervalTrigger', EnabledState: 1, Tasks: [restart], interval: {
+    EnabledState: 1, MatchMonths: [], MatchDays: days, MatchHours: hours, MatchMinutes: [0], MatchDaysOfMonth: []
+  } });
+  const now = Date.parse('2026-11-06T00:01:00Z');
+  assert.equal(deriveScheduledEvents({ PopulatedTriggers: [trigger([4]), trigger([4])] }, false, now).length, 1);
+  assert.equal(deriveScheduledEvents({ PopulatedTriggers: [trigger([4]), trigger([9])] }, false, now).length, 2);
+  assert.equal(deriveScheduledEvents({ PopulatedTriggers: [trigger([4]), trigger([8], [1])] }, false, now).length, 2);
+});
+
+test('maintenance field is absent without events and renders more than three events', () => {
+  const instance = { name: 'game', available: true, ampRunning: true, appState: 'running' };
+  const empty = buildInstanceEmbed({ ...instance, scheduleEvents: [] }, Date.now()).toJSON();
+  assert.ok(!empty.fields.some(field => field.name === 'Scheduled maintenance'));
+  const events = Array.from({ length: 5 }, (_, index) => ({ label: `Restart ${index}`, interval: 'Daily', nextAt: Date.parse('2026-11-06T04:00:00Z') + index * 60000 }));
+  const populated = buildInstanceEmbed({ ...instance, scheduleEvents: events }, Date.now()).toJSON();
+  const maintenance = populated.fields.filter(field => field.name === 'Scheduled maintenance').map(field => field.value).join('\n');
+  for (const event of events) assert.ok(maintenance.includes(event.label));
+  const many = Array.from({ length: 100 }, (_, index) => ({ label: `Restart ${index}`, interval: 'Daily', nextAt: Date.parse('2026-11-06T04:00:00Z') }));
+  const large = buildInstanceEmbed({ ...instance, scheduleEvents: many }, Date.now());
+  assert.ok(large.length <= 6000);
+  assert.ok(large.toJSON().fields.length <= 25);
+  assert.match(JSON.stringify(large.toJSON().fields), /more schedules/);
+});

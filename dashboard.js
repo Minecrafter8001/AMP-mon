@@ -79,17 +79,29 @@ export function buildInstanceEmbed(instance, polledAt) {
     ? `${memory.current}${memory.max === null ? '' : ` / ${memory.max}`} ${safeText(memory.unit, 30)}` : 'Unavailable';
   const players = current && instance.players?.current !== null && instance.players?.current !== undefined
     ? `${instance.players.current}${instance.players.max === null || instance.players.max === undefined ? '' : ` / ${instance.players.max}`}` : 'Unavailable';
-  const maintenance = instance.scheduleEvents?.length
-    ? instance.scheduleEvents.slice(0, 3).map(event => `${safeText(event.label, 80)} - ${safeText(event.interval, 120)}\nNext: <t:${Math.floor(event.nextAt / 1000)}:F> (<t:${Math.floor(event.nextAt / 1000)}:R>)`).join('\n')
-    : instance.maintenanceChecked ? 'No scheduled restart or backup that stops this server.' : 'Schedule unavailable';
   const addresses = [...new Set((instance.endpoints ?? []).map(endpointText).filter(Boolean))];
   const fields = [
     { name: 'state', value: publicStatus(instance), inline: true },
     { name: 'CPU', value: current && instance.cpu !== null && instance.cpu !== undefined ? `${instance.cpu}%` : 'Unavailable', inline: true },
     { name: 'RAM', value: ram, inline: true },
-    { name: 'Players', value: players, inline: true },
-    { name: 'Scheduled maintenance', value: maintenance.slice(0, 1024), inline: false }
+    { name: 'Players', value: players, inline: true }
   ];
+  let maintenance = '';
+  const events = instance.scheduleEvents ?? [];
+  let displayed = 0;
+  for (const event of events) {
+    const line = `${safeText(event.label, 80)} - ${safeText(event.interval, 120)}\nNext: <t:${Math.floor(event.nextAt / 1000)}:F> (<t:${Math.floor(event.nextAt / 1000)}:R>)`;
+    if (maintenance && maintenance.length + line.length + 1 > 950) {
+      fields.push({ name: 'Scheduled maintenance', value: maintenance, inline: false });
+      maintenance = '';
+    }
+    if (fields.length >= 8) break;
+    maintenance += `${maintenance ? '\n' : ''}${line}`;
+    displayed++;
+  }
+  if (displayed < events.length && maintenance) maintenance += `\n${events.length - displayed} more schedules`;
+  else if (displayed < events.length) fields.at(-1).value += `\n${events.length - displayed} more schedules`;
+  if (maintenance) fields.push({ name: 'Scheduled maintenance', value: maintenance, inline: false });
   if (addresses.length) fields.push({ name: 'Addresses:', value: addresses.join('\n').slice(0, 1024), inline: false });
   return new EmbedBuilder().setTitle(safeText(instance.friendlyName ?? instance.name ?? 'Unnamed server', 256))
     .setColor(!instance.available || instance.stale ? 0xe1a526 : instance.ampRunning === false || instance.appState === 'stopped' ? 0xd54a4a : 0x239b65)

@@ -72,6 +72,68 @@ function methodName(task) {
   return String(task.TaskMethodName ?? task.MethodID ?? task.MethodName ?? '').toLowerCase();
 }
 
+const matchFields = ['MatchMonths', 'MatchDays', 'MatchHours', 'MatchMinutes', 'MatchDaysOfMonth'];
+const fullCounts = [12, 7, 24, 60, 31];
+
+function normalizedMatch(interval, field, index) {
+  const values = [...new Set(interval[field])].sort((first, second) => first - second);
+  if (index < 4 && (values.length === 0 || allValues(values, fullCounts[index]))) return [];
+  return values;
+}
+
+function intervalKey(interval) {
+  return JSON.stringify(matchFields.map((field, index) => normalizedMatch(interval, field, index)));
+}
+
+function dailySlots(interval) {
+  const months = normalizedMatch(interval, 'MatchMonths', 0);
+  const days = normalizedMatch(interval, 'MatchDays', 1);
+  if (months.length || days.length || interval.MatchDaysOfMonth.length) return null;
+  const hours = normalizedMatch(interval, 'MatchHours', 2);
+  const minutes = normalizedMatch(interval, 'MatchMinutes', 3);
+  const hourValues = hours.length ? hours : Array.from({ length: 24 }, (_, index) => index);
+  const minuteValues = minutes.length ? minutes : Array.from({ length: 60 }, (_, index) => index);
+  if (!hourValues.every(hour => Number.isInteger(hour) && hour >= 0 && hour < 24) ||
+      !minuteValues.every(minute => Number.isInteger(minute) && minute >= 0 && minute < 60)) return null;
+  return hourValues.flatMap(hour => minuteValues.map(minute => hour * 60 + minute));
+}
+
+function combineDailySchedules(events, now, timeZone) {
+  const remaining = events.map(event => ({ event, slots: dailySlots(event.sourceInterval) }));
+  const combined = [];
+  while (remaining.length > 1) {
+    let best = null;
+    for (let spacing = 1; spacing <= 720; spacing++) {
+      if (1440 % spacing !== 0) continue;
+      const residues = new Set(remaining.flatMap(item => item.slots?.map(slot => slot % spacing) ?? []));
+      for (const residue of residues) {
+        const group = remaining.filter(item => item.slots?.length && item.slots.every(slot => slot % spacing === residue));
+        if (group.length < 2) continue;
+        const slots = [...new Set(group.flatMap(item => item.slots))].sort((first, second) => first - second);
+        if (slots.length !== 1440 / spacing) continue;
+        const hours = [...new Set(slots.map(slot => Math.floor(slot / 60)))];
+        const minutes = [...new Set(slots.map(slot => slot % 60))];
+        if (hours.length * minutes.length !== slots.length) continue;
+        if (!best || group.length > best.group.length) best = { group, hours, minutes, spacing };
+      }
+    }
+    if (!best) break;
+    const interval = { EnabledState: 1, MatchMonths: [], MatchDays: [], MatchHours: best.hours, MatchMinutes: best.minutes, MatchDaysOfMonth: [] };
+    const nextAt = nextScheduleTime(interval, now, timeZone);
+    if (nextAt === null) break;
+    const period = best.spacing % 60 === 0 ? `${best.spacing / 60} ${best.spacing === 60 ? 'hour' : 'hours'}` : `${best.spacing} ${best.spacing === 1 ? 'minute' : 'minutes'}`;
+    const allBackups = best.group.every(item => item.event.state === 'scheduled-backup');
+    combined.push({
+      state: allBackups ? 'scheduled-backup' : 'scheduled-restart',
+      label: allBackups ? 'Scheduled backup (server stops)' : 'Scheduled restart',
+      interval: `Every ${period} (${timeZone})`,
+      nextAt
+    });
+    for (const item of best.group) remaining.splice(remaining.indexOf(item), 1);
+  }
+  return [...combined, ...remaining.map(({ event: { sourceInterval, ...event } }) => event)].sort((first, second) => first.nextAt - second.nextAt);
+}
+
 /**
  * Expose only enabled restart tasks and backups that AMP says will stop this
  * particular application server. Event triggers are excluded because they
@@ -99,7 +161,17 @@ export function deriveScheduledEvents(scheduleData, backupWillStopServer, now = 
     if (nextAt === null) continue;
     const state = scheduledBackup && scheduledRestart ? 'scheduled-backup-and-restart' : scheduledBackup ? 'scheduled-backup' : 'scheduled-restart';
     const label = scheduledBackup && scheduledRestart ? 'Scheduled backup and restart' : scheduledBackup ? 'Scheduled backup (server stops)' : 'Scheduled restart';
-    events.push({ state, label, interval: formatScheduleInterval(interval, timeZone), nextAt });
+    events.push({ state, label, interval: formatScheduleInterval(interval, timeZone), nextAt, sourceInterval: interval });
   }
-  return events.sort((first, second) => first.nextAt - second.nextAt);
+  const unique = new Map();
+  for (const event of events) {
+    const key = intervalKey(event.sourceInterval);
+    const existing = unique.get(key);
+    if (!existing) unique.set(key, event);
+    else if (existing.state !== event.state) {
+      existing.state = 'scheduled-backup-and-restart';
+      existing.label = 'Scheduled backup and restart';
+    }
+  }
+  return combineDailySchedules([...unique.values()], now, timeZone);
 }
