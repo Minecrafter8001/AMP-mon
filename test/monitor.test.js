@@ -67,7 +67,10 @@ test('large overview pages obey embed limits and alert cleanup survives reconstr
   const instances = Array.from({ length: 150 }, (_, index) => ({ id: `game-${index}`, name: 'Game'.repeat(30), host: { name: 'Remote' }, available: true, stale: false, appState: 'running', players: { current: 1 } }));
   const embeds = buildOverviewEmbeds({ ...snapshot, instances });
   assert.ok(embeds.length > 1);
-  for (const embed of embeds) assert.ok(embed.length < 6000 && embed.data.description.length <= 4096);
+  for (const embed of embeds) {
+    assert.ok(embed.length < 6000 && embed.data.description.length <= 4096);
+    assert.ok(embed.data.fields.length <= 25 && embed.data.fields.every(field => field.inline === false));
+  }
   assert.doesNotThrow(() => buildInstanceEmbed({ id: 'game', available: false }, Date.now()).toJSON());
   const store = memoryStore();
   const discord = fakeDiscord();
@@ -135,11 +138,13 @@ test('AMP login, nested discovery and SESSIONID use the official request shape',
     fetchImpl: async (url, options) => {
       const body = JSON.parse(options.body);
       calls.push({ url: String(url), body });
-      return String(url).endsWith('/Login') ? jsonResponse({ result: { success: true, sessionID: 'session' } }) : jsonResponse([{ FriendlyName: 'Remote', AvailableInstances: [{ InstanceID: 'game-1', Running: true, Module: 'Minecraft' }] }]);
+      return String(url).endsWith('/Login') ? jsonResponse({ result: { success: true, sessionID: 'session' } }) : jsonResponse([{ FriendlyName: 'Remote', AvailableInstances: [{ InstanceID: 'game-1', InstanceName: 'minecraft-main', FriendlyName: 'Minecraft Community', Running: true, Module: 'Minecraft' }] }]);
     }
   });
   const instances = await client.getNetworkInstances();
   assert.equal(instances[0].host.name, 'Remote');
+  assert.equal(instances[0].name, 'minecraft-main');
+  assert.equal(instances[0].friendlyName, 'Minecraft Community');
   assert.equal(calls[0].url, 'https://amp.example/prefix/API/Core/Login');
   assert.equal(calls[0].body.username, 'bot');
   assert.equal(calls[1].body.SESSIONID, 'session');
@@ -286,10 +291,10 @@ test('documented configuration example is valid and matches generated defaults',
 });
 
 test('overview and instance embeds display names but never the internal AMP key', () => {
-  const instance = { id: 'secret-internal-guid', name: 'Minecraft_01', host: { name: 'Node A' }, available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 2, max: 10 }, memory: { current: 4, max: 8, unit: 'GB' }, cpu: 20, endpoints: [], updatedAt: Date.now() };
-  const overviewText = buildOverviewEmbeds({ ...snapshot, instances: [instance] }).map(embed => embed.toJSON()).map(embed => `${embed.title}\n${embed.description}\n${embed.footer?.text}`).join('\n');
+  const instance = { id: 'secret-internal-guid', name: 'Minecraft_01', friendlyName: 'Minecraft Community', host: { name: 'Node A' }, available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 2, max: 10 }, memory: { current: 4, max: 8, unit: 'GB' }, cpu: 20, endpoints: [], updatedAt: Date.now() };
+  const overviewText = buildOverviewEmbeds({ ...snapshot, instances: [instance] }).map(embed => embed.toJSON()).map(embed => `${embed.title}\n${embed.description}\n${embed.fields.map(field => `${field.name} ${field.value}`).join('\n')}\n${embed.footer?.text}`).join('\n');
   const instanceText = JSON.stringify(buildInstanceEmbed(instance, Date.now()).toJSON());
-  assert.ok(overviewText.includes('Minecraft'));
+  assert.ok(overviewText.includes('Minecraft Community'));
   assert.ok(instanceText.includes('Minecraft'));
   assert.doesNotMatch(overviewText, /secret-internal-guid|InstanceID/);
   assert.doesNotMatch(instanceText, /secret-internal-guid|InstanceID/);
@@ -297,17 +302,17 @@ test('overview and instance embeds display names but never the internal AMP key'
 
 test('public overview avoids AMP, host and polling jargon while reporting availability and players', () => {
   const instances = [
-    { id: 'one', name: 'Minecraft_01', host: { name: 'Private Node A' }, available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 1 } },
+    { id: 'one', name: 'Minecraft_01', friendlyName: 'Minecraft Community', host: { name: 'Private Node A' }, available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 1 } },
     { id: 'two', name: 'Palworld_02', host: { name: 'Private Node B' }, available: true, stale: false, ampRunning: false, appState: 'stopped', players: { current: 0 } },
     { id: 'three', name: 'Valheim_03', host: { name: 'Private Node C' }, available: true, stale: true, ampRunning: true, appState: 'running', players: { current: 4 } }
   ];
   const embed = buildOverviewEmbeds({ ...snapshot, instances })[0].toJSON();
-  const visible = `${embed.title}\n${embed.description}\n${embed.footer?.text ?? ''}`;
+  const visible = `${embed.title}\n${embed.description}\n${embed.fields.map(field => `${field.name} | ${field.value}`).join('\n')}\n${embed.footer?.text ?? ''}`;
   assert.match(visible, /1 of 3 servers online/);
   assert.match(visible, /At least 1 player online/);
-  assert.ok(visible.includes('Minecraft\\_01** | Online | 1 player'));
-  assert.ok(visible.includes('Palworld\\_02** | Offline | 0 players'));
-  assert.ok(visible.includes('Valheim\\_03** | Checking status | Player count updating'));
+  assert.ok(visible.includes('Minecraft Community | Online | 1 player'));
+  assert.ok(visible.includes('Palworld\\_02 | Offline | 0 players'));
+  assert.ok(visible.includes('Valheim\\_03 | Checking status | Player count updating'));
   assert.doesNotMatch(visible, /AMP|Private Node|polling|partial|InstanceID|stale|one|two|three/);
 });
 
@@ -368,12 +373,13 @@ test('hide/show commands persist visibility and update overview totals but retai
   assert.deepEqual(store.snapshot().hiddenInstances, ['hidden-game']);
   const overviewId = store.snapshot().overview.messageIds[0];
   const dedicatedId = store.snapshot().instances['hidden-game'].messageIds[0];
-  const overviewAfterHide = discord.messages.get(overviewId).body.embeds[0].data.description;
+  const overviewAfterHide = JSON.stringify(discord.messages.get(overviewId).body.embeds[0].data);
   assert.doesNotMatch(overviewAfterHide, /Factorio_01/);
   assert.match(overviewAfterHide, /1 player online/);
   assert.match(discord.messages.get(dedicatedId).body.embeds[0].data.title, /Factorio/);
   await run('monitor-show');
   assert.deepEqual(store.snapshot().hiddenInstances, []);
-  assert.match(discord.messages.get(overviewId).body.embeds[0].data.description, /Factorio/);
-  assert.match(discord.messages.get(overviewId).body.embeds[0].data.description, /5 players online/);
+  const overviewAfterShow = JSON.stringify(discord.messages.get(overviewId).body.embeds[0].data);
+  assert.match(overviewAfterShow, /Factorio/);
+  assert.match(overviewAfterShow, /5 players online/);
 });

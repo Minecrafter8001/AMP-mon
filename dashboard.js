@@ -42,21 +42,30 @@ export function buildOverviewEmbeds(snapshot, hiddenIds = []) {
   const total = visibleInstances.length;
   const availability = snapshot.discoveryFailed ? 'Server status is updating.' : total === 0 ? 'No servers to show right now.' : `${onlineCount} of ${total} ${total === 1 ? 'server' : 'servers'} online.`;
   const players = summary.complete ? `${summary.total} ${summary.total === 1 ? 'player' : 'players'} online.` : `At least ${summary.total} ${summary.total === 1 ? 'player' : 'players'} online.`;
-  const heading = `**${availability}**\n${players}\n`;
-  const lines = [...visibleInstances].sort((first, second) => `${first.name}/${first.id}`.localeCompare(`${second.name}/${second.id}`)).map(instance => {
-    return `**${safeText(instance.name, 100)}** | ${publicStatus(instance)} | ${publicPlayers(instance)}`;
-  });
-  if (!lines.length && total === 0 && snapshot.instances.length > 0) lines.push('No public servers are currently shown.');
+  const heading = `**${availability}**\n${players}`;
+  const fields = [...visibleInstances].sort((first, second) => `${first.friendlyName ?? first.name}/${first.id}`.localeCompare(`${second.friendlyName ?? second.name}/${second.id}`)).map(instance => ({
+    name: safeText(instance.friendlyName ?? instance.name ?? 'Unnamed server', 100),
+    value: `${publicStatus(instance)} | ${publicPlayers(instance)}`,
+    inline: false
+  }));
   const pages = [];
-  let content = heading;
-  for (const line of lines) {
-    if (content.length + line.length + 2 > 3500) { pages.push(content); content = heading; }
-    content += `\n${line}\n`;
+  let pageFields = [];
+  let pageLength = heading.length;
+  for (const field of fields) {
+    const fieldLength = field.name.length + field.value.length;
+    if (pageFields.length === 25 || pageLength + fieldLength > 5400) {
+      pages.push(pageFields);
+      pageFields = [];
+      pageLength = heading.length;
+    }
+    pageFields.push(field);
+    pageLength += fieldLength;
   }
-  pages.push(content);
-  return pages.map((description, index) => new EmbedBuilder()
+  if (pageFields.length || pages.length === 0) pages.push(pageFields);
+  return pages.map((page, index) => new EmbedBuilder()
     .setTitle('Server Status')
-    .setDescription(description)
+    .setDescription(page.length === 0 && total === 0 && snapshot.instances.length > 0 ? `${heading}\nNo public servers are currently shown.` : heading)
+    .addFields(page)
     .setColor(snapshot.discoveryFailed || unresolved ? 0xe1a526 : total === 0 || onlineCount === total ? 0x239b65 : 0xd54a4a)
     .setFooter(pages.length > 1 ? { text: `${index + 1} of ${pages.length}` } : null)
     .setTimestamp(snapshot.polledAt));
@@ -70,7 +79,7 @@ export function buildInstanceEmbed(instance, polledAt) {
     ? `${memory.current}${memory.max === null ? '' : ` / ${memory.max}`} ${safeText(memory.unit, 30)}` : 'Unavailable';
   const players = current && instance.players?.current !== null && instance.players?.current !== undefined
     ? `${instance.players.current}${instance.players.max === null || instance.players.max === undefined ? '' : ` / ${instance.players.max}`}` : 'Unavailable';
-  return new EmbedBuilder().setTitle(safeText(instance.name ?? 'Unnamed instance', 256))
+  return new EmbedBuilder().setTitle(safeText(instance.friendlyName ?? instance.name ?? 'Unnamed server', 256))
     .setColor(!instance.available || instance.stale ? 0xe1a526 : instance.ampRunning === false || instance.appState === 'stopped' ? 0xd54a4a : 0x239b65)
     .addFields(
       { name: 'Execution state', value: publicStatus(instance), inline: true },

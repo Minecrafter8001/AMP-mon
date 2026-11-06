@@ -40,6 +40,7 @@ export function normalizeInstances(response) {
         id: entry.InstanceID,
         // Prefer AMP's raw instance name over display-oriented friendly labels.
         name: String(entry.InstanceName ?? entry.Name ?? entry.FriendlyName ?? entry.DisplayName ?? 'Unnamed instance'),
+        friendlyName: String(entry.FriendlyName ?? entry.DisplayName ?? entry.InstanceName ?? entry.Name ?? 'Unnamed server'),
         module,
         host,
         ampRunning: typeof entry.Running === 'boolean' ? entry.Running : null,
