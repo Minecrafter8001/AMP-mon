@@ -65,6 +65,16 @@ export function validateConfig(config) {
   if (!/^[\w]+\/[\w]+$/.test(amp.discoveryMethod) || !object(amp.discoveryParams) || !object(amp.instanceOverrides) || !object(amp.metricKeys) || !object(amp.appStateMap)) throw new Error('Invalid AMP adapter settings');
   if (!['login', 'root'].includes(amp.childSession) || typeof amp.proxyPathTemplate !== 'string' || !amp.proxyPathTemplate.includes('{instanceId}')) throw new Error('Invalid AMP child routing settings');
   if (!Object.values(amp.metricKeys).every(value => typeof value === 'string' && value.length > 0) || !Object.values(amp.appStateMap).every(value => ['running', 'stopped', 'starting', 'stopping', 'restarting', 'unknown'].includes(value))) throw new Error('Invalid AMP normalization settings');
+  for (const [id, override] of Object.entries(amp.instanceOverrides)) {
+    if (!/^[\w-]+$/.test(id) || !object(override)) throw new Error('Invalid AMP instance override');
+    if (override.url !== undefined) {
+      const url = new URL(override.url);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid AMP override URL');
+    }
+    if (override.endpoints !== undefined && (!Array.isArray(override.endpoints) || !override.endpoints.every(value => typeof value === 'string'))) throw new Error('Invalid override endpoints');
+    if (override.metricKeys !== undefined && (!object(override.metricKeys) || !Object.values(override.metricKeys).every(value => typeof value === 'string' && value.length > 0))) throw new Error('Invalid override metric keys');
+    if (override.appStateMap !== undefined && (!object(override.appStateMap) || !Object.values(override.appStateMap).every(value => ['running', 'stopped', 'starting', 'stopping', 'restarting', 'unknown'].includes(value)))) throw new Error('Invalid override application states');
+  }
   return config;
 }
 

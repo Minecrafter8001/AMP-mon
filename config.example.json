@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "guildId": null,
+  "networkUrl": null,
+  "overview": null,
+  "instances": {},
+  "states": {},
+  "pendingAlerts": [],
+  "settings": {
+    "pollIntervalMs": 30000,
+    "concurrency": 4,
+    "requestTimeoutMs": 10000,
+    "alerts": {
+      "enabled": true,
+      "retentionSeconds": 300,
+      "cooldownSeconds": 0,
+      "mode": "either"
+    },
+    "amp": {
+      "discoveryMethod": "ADSModule/GetInstances",
+      "discoveryParams": {},
+      "proxyPathTemplate": "API/ADSModule/Servers/{instanceId}/",
+      "childSession": "login",
+      "instanceOverrides": {},
+      "metricKeys": {
+        "cpu": "CPU Usage",
+        "memory": "Memory Usage",
+        "players": "Active Users"
+      },
+      "appStateMap": {
+        "Running": "running",
+        "Stopped": "stopped",
+        "Starting": "starting",
+        "Stopping": "stopping",
+        "Restarting": "restarting"
+      }
+    }
+  }
+}

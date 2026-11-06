@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConfigStore } from '../configStore.js';
+import { ConfigStore, validateConfig } from '../configStore.js';
 import { defaults } from '../configStore.js';
 import { AmpClient, normalizeInstances, normalizeStatus } from '../ampClient.js';
 import { Monitor, mapLimit, playerSummary } from '../monitor.js';
@@ -186,6 +186,55 @@ test('child sessions are isolated and transport refuses redirects', async () => 
   assert.throws(() => client.childRoute({ id: '../bad' }));
 });
 
+test('per-instance adapters honor MaxValue, custom player metrics and state enums', async () => {
+  const settings = defaults().settings.amp;
+  settings.instanceOverrides.game = { metricKeys: { players: 'Players' }, appStateMap: { '42': 'running' }, endpoints: ['game.example:25565'] };
+  const client = new AmpClient({ url: 'https://amp.example/', username: 'bot', settings,
+    fetchImpl: async url => String(url).endsWith('/Login') ? jsonResponse({ sessionID: 'child' }) : jsonResponse({ State: 42, Metrics: { Players: { RawValue: 4, MaxValue: 20 }, 'Memory Usage': { RawValue: 512, MaxValue: 2048, Units: 'MB' } } })
+  });
+  const status = await client.getInstanceStatus({ id: 'game', available: true, ampRunning: true, rawEndpoints: [] });
+  assert.equal(status.appState, 'running');
+  assert.deepEqual(status.players, { current: 4, max: 20 });
+  assert.equal(status.memory.max, 2048);
+  assert.deepEqual(status.endpoints, ['game.example:25565']);
+});
+
+test('application-only transitions, configurable cooldown and permanent alerts', async () => {
+  const store = memoryStore();
+  await store.update(config => { config.settings.alerts.mode = 'application'; config.settings.alerts.cooldownSeconds = 60; config.settings.alerts.retentionSeconds = null; });
+  let appState = 'running';
+  let now = 1000;
+  let alerts = 0;
+  const monitor = new Monitor({ store, now: () => now, log: quiet, alert: async () => { alerts++; }, amp: {
+    getNetworkInstances: async () => [{ id: 'game', ampRunning: true, available: true }],
+    getInstanceStatus: async instance => ({ ...instance, appState, stale: false, players: { current: 0 } }), close() {}
+  } });
+  await monitor.poll(); appState = 'stopped'; await monitor.poll();
+  appState = 'running'; await monitor.poll(); appState = 'stopped'; await monitor.poll();
+  assert.equal(alerts, 1);
+  now += 61000; appState = 'running'; await monitor.poll(); appState = 'stopped'; await monitor.poll();
+  assert.equal(alerts, 2);
+  const discord = fakeDiscord();
+  const dashboard = new Dashboard({ store, client: discord.client, guildId });
+  await dashboard.bind(null, channelId, snapshot);
+  await dashboard.alert({ id: 'game', name: 'Game' });
+  assert.equal(store.snapshot().pendingAlerts.length, 0);
+});
+
+test('overview shrinking removes surplus tracked pages and simultaneous binds remain idempotent', async () => {
+  const store = memoryStore();
+  const discord = fakeDiscord();
+  const dashboard = new Dashboard({ store, client: discord.client, guildId });
+  await Promise.all([dashboard.bind(null, channelId, snapshot), dashboard.bind(null, channelId, snapshot)]);
+  assert.equal(discord.messages.size, 1);
+  const instances = Array.from({ length: 100 }, (_, index) => ({ id: `game-${index}`, name: 'Long name'.repeat(20), available: true, players: { current: 0 } }));
+  await dashboard.publish({ ...snapshot, instances });
+  assert.ok(discord.messages.size > 1);
+  await dashboard.publish(snapshot);
+  assert.equal(discord.messages.size, 1);
+  assert.equal(store.snapshot().overview.messageIds.length, 1);
+});
+
 test('JSON transactions preserve concurrent changes and isolate snapshots', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'amp-mon-'));
   try {
@@ -213,4 +262,9 @@ test('malformed existing configuration is not overwritten', async () => {
     await assert.rejects(new ConfigStore(path).load());
     assert.equal(await readFile(path, 'utf8'), '{broken');
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('documented configuration example is valid and matches generated defaults', async () => {
+  const example = JSON.parse(await readFile(new URL('../config.example.json', import.meta.url), 'utf8'));
+  assert.deepEqual(validateConfig(example), defaults());
 });

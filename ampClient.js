@@ -61,14 +61,14 @@ export function normalizeStatus(instance, status, settings, now = Date.now()) {
   const memory = metrics[settings.metricKeys.memory];
   const users = metrics[settings.metricKeys.players];
   const rawState = status?.State ?? status?.AppState ?? instance.rawAppState;
-  const appState = settings.appStateMap[String(rawState)] ?? 'unknown';
+  const appState = instance.ampRunning === false ? 'stopped' : settings.appStateMap[String(rawState)] ?? 'unknown';
   const stopped = instance.ampRunning === false || appState === 'stopped';
   return {
     ...instance, appState, stale: false, updatedAt: now,
     cpu: number(cpu?.Percent),
-    memory: { current: number(memory?.RawValue ?? memory?.Current), max: number(memory?.Max), unit: typeof memory?.Units === 'string' ? memory.Units : null },
-    players: { current: stopped ? 0 : number(users?.RawValue ?? users?.Current), max: number(users?.Max) },
-    endpoints: instance.rawEndpoints.map(endpoint => typeof endpoint === 'string' ? endpoint : String(endpoint.Endpoint ?? endpoint.Uri ?? '')).filter(Boolean)
+    memory: { current: number(memory?.RawValue ?? memory?.Current), max: number(memory?.MaxValue ?? memory?.Max), unit: typeof memory?.Units === 'string' ? memory.Units : null },
+    players: { current: stopped ? 0 : number(users?.RawValue ?? users?.Current), max: number(users?.MaxValue ?? users?.Max) },
+    endpoints: (instance.rawEndpoints ?? []).map(endpoint => typeof endpoint === 'string' ? endpoint : String(endpoint?.Endpoint ?? endpoint?.Uri ?? '')).filter(Boolean)
   };
 }
 
@@ -132,13 +132,24 @@ export class AmpClient {
     const session = this.session(sessionUrl);
     if (!session.id) await this.login(sessionUrl);
     const usedId = session.id;
-    try { return await this.post(url, method, parameters, usedId); }
+    try { return await this.readPost(url, method, parameters, usedId); }
     catch (error) {
       if (error.kind !== 'auth') throw error;
       // Another concurrent request may already have refreshed this session.
       if (session.id === usedId) session.id = '';
       if (!session.id) await this.login(sessionUrl);
-      return this.post(url, method, parameters, session.id);
+      return this.readPost(url, method, parameters, session.id);
+    }
+  }
+
+  /** One bounded retry for server throttling/errors; the next poll handles longer outages. */
+  async readPost(url, method, parameters, sessionId) {
+    try { return await this.post(url, method, parameters, sessionId); }
+    catch (error) {
+      if (error.kind !== 'transient') throw error;
+      const { setTimeout } = await import('node:timers/promises');
+      await setTimeout(500, undefined, { signal: this.abortController.signal });
+      return this.post(url, method, parameters, sessionId);
     }
   }
 
@@ -159,11 +170,18 @@ export class AmpClient {
   }
 
   async getInstanceStatus(instance) {
-    if (instance.ampRunning === false) return normalizeStatus(instance, {}, this.settings);
+    const override = this.settings.instanceOverrides[instance.id] ?? {};
+    const settings = {
+      ...this.settings,
+      metricKeys: { ...this.settings.metricKeys, ...override.metricKeys },
+      appStateMap: { ...this.settings.appStateMap, ...override.appStateMap }
+    };
+    const input = { ...instance, rawEndpoints: override.endpoints ?? instance.rawEndpoints };
+    if (instance.ampRunning === false) return normalizeStatus(input, {}, settings);
     const route = this.childRoute(instance);
     const status = await this.request('Core/GetStatus', {}, route.url, route.sessionUrl);
     if (!record(status) || !record(status.Metrics)) throw new AmpError('Unsupported GetStatus response; inspect AMP metrics', 'schema');
-    return normalizeStatus(instance, status, this.settings);
+    return normalizeStatus(input, status, settings);
   }
 
   close() { this.abortController.abort(); }

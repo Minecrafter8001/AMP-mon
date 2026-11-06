@@ -47,6 +47,7 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(error.name === 'AmpError' ? 'AMP configuration failed; check the configured URL.' : error.message);
+  const controlled = /^(Missing |Set AMP_|Invalid DISCORD_|Node.js |Existing config |Discord login failed)/.test(error.message);
+  console.error(controlled ? error.message : 'Startup failed; check config.json, AMP URL, settings and service permissions.');
   process.exitCode = 1;
 });
