@@ -32,7 +32,6 @@ export class Monitor extends EventEmitter {
     super();
     Object.assign(this, { amp, store, publish, alert, log, now });
     this.snapshot = null;
-    this.discoveredInstances = null;
     this.history = new Map();
     this.lastAlerts = new Map();
     this.task = null;
@@ -58,8 +57,6 @@ export class Monitor extends EventEmitter {
       await this.deliver();
       return this.snapshot;
     }
-    // Expose names as soon as root discovery completes; autocomplete need not wait for child metrics.
-    this.discoveredInstances = discovered;
     const cached = new Map((this.snapshot?.instances ?? []).map(instance => [instance.id, instance]));
     const instances = await mapLimit(discovered, config.settings.concurrency, async instance => {
       try { return await this.amp.getInstanceStatus(instance); }

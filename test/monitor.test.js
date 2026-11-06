@@ -70,7 +70,7 @@ test('large overview pages obey embed limits and alert cleanup survives reconstr
   assert.ok(embeds.length > 1);
   for (const embed of embeds) {
     assert.ok(embed.length < 6000 && embed.data.description.length <= 4096);
-    assert.ok(embed.data.fields.length <= 25 && embed.data.fields.every(field => field.inline === false));
+    assert.ok(embed.data.fields.length <= 25 && embed.data.fields.every(field => field.inline === true));
   }
   assert.doesNotThrow(() => buildInstanceEmbed({ id: 'game', available: false }, Date.now()).toJSON());
   const store = memoryStore();

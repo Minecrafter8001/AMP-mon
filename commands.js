@@ -71,10 +71,7 @@ export function commandHandler({ guildId, monitor, dashboard, store, log = conso
           return;
         }
         const config = store.snapshot();
-        const snapshot = monitor.snapshot && !monitor.snapshot.discoveryFailed
-          ? monitor.snapshot
-          : monitor.discoveredInstances ? { instances: monitor.discoveredInstances, discoveryFailed: false } : null;
-        await interaction.respond(autocompleteChoices(interaction, snapshot, config.hiddenInstances));
+        await interaction.respond(autocompleteChoices(interaction, monitor.snapshot, config.hiddenInstances));
       } catch {
         try { await interaction.respond([]); } catch { log.warn('Autocomplete response could not be delivered'); }
       }
