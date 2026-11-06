@@ -10,6 +10,7 @@ export function defaults() {
     networkUrl: null,
     overview: null,
     instances: {},
+    hiddenInstances: [],
     states: {},
     pendingAlerts: [],
     settings: {
@@ -50,6 +51,8 @@ export function validateConfig(config) {
   if (config.guildId !== null && !snowflake(config.guildId)) throw new Error('Invalid guildId');
   if (config.networkUrl !== null && typeof config.networkUrl !== 'string') throw new Error('Invalid networkUrl');
   if (!object(config.instances) || !object(config.states) || !Array.isArray(config.pendingAlerts)) throw new Error('Invalid dashboard state');
+  config.hiddenInstances ??= [];
+  if (!Array.isArray(config.hiddenInstances) || !config.hiddenInstances.every(identifier => typeof identifier === 'string' && /^[\w-]+$/.test(identifier))) throw new Error('Invalid hidden instance list');
   const mapping = value => object(value) && snowflake(value.channelId) && Array.isArray(value.messageIds) && value.messageIds.every(snowflake);
   if (config.overview !== null && !mapping(config.overview)) throw new Error('Invalid overview mapping');
   if (!Object.entries(config.instances).every(([key, value]) => /^[\w-]+$/.test(key) && mapping(value))) throw new Error('Invalid instance mapping');

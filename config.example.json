@@ -4,6 +4,7 @@
   "networkUrl": null,
   "overview": null,
   "instances": {},
+  "hiddenInstances": [],
   "states": {},
   "pendingAlerts": [],
   "settings": {

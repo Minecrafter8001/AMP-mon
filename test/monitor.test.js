@@ -12,13 +12,16 @@ import { ChannelType } from 'discord.js';
 import { commands, commandHandler } from '../commands.js';
 
 test('slash command registration and runtime handlers enforce guild administration', async () => {
-  assert.equal(commands.length, 2);
+  assert.equal(commands.length, 4);
   assert.equal(commands[1].toJSON().options[0].name, 'instance_name');
   assert.equal(commands[1].toJSON().options[0].required, true);
+  assert.equal(commands[1].toJSON().options[0].autocomplete, true);
+  assert.deepEqual(commands.slice(2).map(command => command.name), ['monitor-hide', 'monitor-show']);
+  assert.ok(commands.slice(2).every(command => command.toJSON().options[0].autocomplete));
   let bound = false;
   const handler = commandHandler({ guildId, monitor: { snapshot }, dashboard: { bind: async () => { bound = true; } }, log: quiet });
   let response;
-  await handler({ isChatInputCommand: () => true, commandName: 'monitor-setup', guildId, memberPermissions: { has: () => false }, reply: async body => { response = body; } });
+  await handler({ isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor-setup', guildId, memberPermissions: { has: () => false }, reply: async body => { response = body; } });
   assert.equal(bound, false);
   assert.ok(response.content.includes('permission'));
 });
@@ -314,7 +317,7 @@ test('monitor-add resolves exact non-friendly instance name and keeps its ID int
   const handler = commandHandler({ guildId, monitor: { snapshot: { ...snapshot, instances: [instance] } }, dashboard: { channel: async () => ({}), bind: async id => { boundId = id; } }, log: quiet });
   const replies = [];
   const interaction = {
-    isChatInputCommand: () => true, commandName: 'monitor-add', guildId,
+    isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor-add', guildId,
     memberPermissions: { has: () => true }, channel: { id: channelId, guildId, type: ChannelType.GuildText },
     options: { getChannel: () => null, getString: name => { assert.equal(name, 'instance_name'); return 'Minecraft_01'; } },
     async deferReply() {}, async editReply(response) { replies.push(response); }
@@ -322,4 +325,55 @@ test('monitor-add resolves exact non-friendly instance name and keeps its ID int
   await handler(interaction);
   assert.equal(boundId, instance.id);
   assert.doesNotMatch(replies[0].content, /internal-id-123|InstanceID/);
+});
+
+test('autocomplete filters names and scopes hide/show suggestions to visibility', async () => {
+  const store = memoryStore();
+  await store.update(config => { config.hiddenInstances = ['game-hidden']; });
+  const monitor = { snapshot: { ...snapshot, instances: [
+    { id: 'game-visible', name: 'Minecraft_01', available: true },
+    { id: 'game-hidden', name: 'Factorio_01', available: true },
+    { id: 'game-stopped', name: 'Minecraft_02', available: false }
+  ] } };
+  const handler = commandHandler({ guildId, monitor, dashboard: {}, store, log: quiet });
+  async function complete(commandName, value) {
+    let response;
+    await handler({ isAutocomplete: () => true, commandName, guildId, memberPermissions: { has: () => true },
+      options: { getFocused: () => ({ name: 'instance_name', value }) }, respond: async choices => { response = choices; } });
+    return response;
+  }
+  assert.deepEqual((await complete('monitor-add', 'mine')).map(option => option.value), ['Minecraft_01']);
+  assert.deepEqual((await complete('monitor-hide', '')).map(option => option.value), ['Minecraft_01']);
+  assert.deepEqual((await complete('monitor-show', 'fact')).map(option => option.value), ['Factorio_01']);
+});
+
+test('hide/show commands persist visibility and update overview totals but retain dedicated embeds', async () => {
+  const store = memoryStore();
+  const discord = fakeDiscord();
+  const dashboard = new Dashboard({ store, client: discord.client, guildId, log: quiet });
+  const monitor = { snapshot: { ...snapshot, instances: [
+    { id: 'visible-game', name: 'Minecraft_01', available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 1 } },
+    { id: 'hidden-game', name: 'Factorio_01', available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 4 } }
+  ] } };
+  await dashboard.bind(null, channelId, monitor.snapshot);
+  await dashboard.bind('hidden-game', channelId, monitor.snapshot);
+  const handler = commandHandler({ guildId, monitor, dashboard, store, log: quiet });
+  async function run(commandName) {
+    let reply;
+    await handler({ isAutocomplete: () => false, isChatInputCommand: () => true, commandName, guildId, memberPermissions: { has: () => true },
+      options: { getString: () => 'Factorio_01' }, async deferReply() {}, async editReply(response) { reply = response; } });
+    return reply;
+  }
+  await run('monitor-hide');
+  assert.deepEqual(store.snapshot().hiddenInstances, ['hidden-game']);
+  const overviewId = store.snapshot().overview.messageIds[0];
+  const dedicatedId = store.snapshot().instances['hidden-game'].messageIds[0];
+  const overviewAfterHide = discord.messages.get(overviewId).body.embeds[0].data.description;
+  assert.doesNotMatch(overviewAfterHide, /Factorio_01/);
+  assert.match(overviewAfterHide, /1 player online/);
+  assert.match(discord.messages.get(dedicatedId).body.embeds[0].data.title, /Factorio/);
+  await run('monitor-show');
+  assert.deepEqual(store.snapshot().hiddenInstances, []);
+  assert.match(discord.messages.get(overviewId).body.embeds[0].data.description, /Factorio/);
+  assert.match(discord.messages.get(overviewId).body.embeds[0].data.description, /5 players online/);
 });

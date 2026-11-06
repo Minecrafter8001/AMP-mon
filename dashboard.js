@@ -33,18 +33,20 @@ function publicPlayers(instance) {
 }
 
 /** One embed per tracked message keeps both per-embed and total message limits simple. */
-export function buildOverviewEmbeds(snapshot) {
-  const summary = playerSummary(snapshot.instances);
-  const onlineCount = snapshot.instances.filter(instance => publicStatus(instance) === 'Online').length;
-  const unresolved = snapshot.discoveryFailed || snapshot.instances.some(instance => publicStatus(instance) === 'Checking status');
-  const total = snapshot.instances.length;
+export function buildOverviewEmbeds(snapshot, hiddenIds = []) {
+  const hidden = new Set(hiddenIds);
+  const visibleInstances = snapshot.instances.filter(instance => !hidden.has(instance.id));
+  const summary = playerSummary(visibleInstances);
+  const onlineCount = visibleInstances.filter(instance => publicStatus(instance) === 'Online').length;
+  const unresolved = snapshot.discoveryFailed || visibleInstances.some(instance => publicStatus(instance) === 'Checking status');
+  const total = visibleInstances.length;
   const availability = snapshot.discoveryFailed ? 'Server status is updating.' : total === 0 ? 'No servers to show right now.' : `${onlineCount} of ${total} ${total === 1 ? 'server' : 'servers'} online.`;
   const players = summary.complete ? `${summary.total} ${summary.total === 1 ? 'player' : 'players'} online.` : `At least ${summary.total} ${summary.total === 1 ? 'player' : 'players'} online.`;
   const heading = `**${availability}**\n${players}\n`;
-  const lines = [...snapshot.instances].sort((first, second) => `${first.name}/${first.id}`.localeCompare(`${second.name}/${second.id}`)).map(instance => {
+  const lines = [...visibleInstances].sort((first, second) => `${first.name}/${first.id}`.localeCompare(`${second.name}/${second.id}`)).map(instance => {
     return `**${safeText(instance.name, 100)}** | ${publicStatus(instance)} | ${publicPlayers(instance)}`;
   });
-  if (!lines.length && !snapshot.discoveryFailed) lines.push('Server list is not available yet.');
+  if (!lines.length && total === 0 && snapshot.instances.length > 0) lines.push('No public servers are currently shown.');
   const pages = [];
   let content = heading;
   for (const line of lines) {
@@ -149,8 +151,8 @@ export class Dashboard {
     });
   }
 
-  render(id, snapshot) {
-    if (id === null) return buildOverviewEmbeds(snapshot);
+  render(id, snapshot, config = this.store.snapshot()) {
+    if (id === null) return buildOverviewEmbeds(snapshot, config.hiddenInstances);
     const instance = snapshot.instances.find(value => value.id === id) ?? { id, name: id, available: false, players: { current: null, max: null } };
     return [buildInstanceEmbed(instance, snapshot.polledAt)];
   }
@@ -160,7 +162,7 @@ export class Dashboard {
       const config = this.store.snapshot();
       const mappings = [...(config.overview ? [[null, config.overview]] : []), ...Object.entries(config.instances)];
       for (const [id, mapping] of mappings) {
-        try { await this.upsert(mapping, this.render(id, snapshot), updated => this.saveMapping(id, updated)); }
+        try { await this.upsert(mapping, this.render(id, snapshot, config), updated => this.saveMapping(id, updated)); }
         catch { this.log.warn('Dashboard update failed; check channel permissions', { instanceId: id, channelId: mapping.channelId }); }
       }
     });
@@ -173,7 +175,7 @@ export class Dashboard {
       const config = this.store.snapshot();
       const old = id === null ? config.overview : config.instances[id];
       const mapping = old?.channelId === channelId ? old : { channelId, messageIds: [] };
-      await this.upsert(mapping, this.render(id, snapshot), updated => this.saveMapping(id, updated));
+      await this.upsert(mapping, this.render(id, snapshot, config), updated => this.saveMapping(id, updated));
       await this.saveMapping(id, mapping);
       if (old && old.channelId !== channelId) {
         try {
@@ -184,10 +186,20 @@ export class Dashboard {
     });
   }
 
+  async setHidden(instanceId, hidden, snapshot) {
+    await this.store.update(config => {
+      const ids = new Set(config.hiddenInstances);
+      if (hidden) ids.add(instanceId);
+      else ids.delete(instanceId);
+      config.hiddenInstances = [...ids];
+    });
+    await this.publish(snapshot);
+  }
+
   alert(instance) {
     return this.serial(async () => {
       const config = this.store.snapshot();
-      if (!config.overview || !config.settings.alerts.enabled) return;
+      if (!config.overview || !config.settings.alerts.enabled || config.hiddenInstances.includes(instance.id)) return;
       const channel = await this.channel(config.overview.channelId);
       const message = await channel.send({ content: `Downtime detected: ${safeText(instance.name, 120)} is stopped.`, allowedMentions: { parse: [] } });
       const retention = config.settings.alerts.retentionSeconds;

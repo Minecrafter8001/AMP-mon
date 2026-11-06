@@ -29,7 +29,7 @@ async function main() {
   process.once('SIGINT', () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   process.once('SIGTERM', () => { void shutdown().catch(() => { process.exitCode = 1; }); });
   client.on(Events.Error, () => console.warn('Discord client error; check connectivity.'));
-  client.on(Events.InteractionCreate, commandHandler({ guildId: env.guildId, monitor, dashboard }));
+  client.on(Events.InteractionCreate, commandHandler({ guildId: env.guildId, monitor, dashboard, store }));
   client.once(Events.ClientReady, () => {
     if (stopping) return;
     console.info('Discord ready; starting AMP network monitoring.');
