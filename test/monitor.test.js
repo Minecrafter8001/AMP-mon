@@ -385,24 +385,17 @@ test('hide/show commands persist visibility and update overview totals but retai
   assert.match(overviewAfterShow, /5 players online/);
 });
 
-test('command deployment updates existing commands and creates only missing commands', async () => {
+test('command deployment clears the guild command set before registering all project commands', async () => {
   const calls = [];
   const routes = {
     applicationGuildCommands: (client, guild) => `collection:${client}:${guild}`,
-    applicationGuildCommand: (client, guild, id) => `command:${client}:${guild}:${id}`
   };
-  const existing = [{ id: 'existing-setup', name: 'monitor-setup', type: 1 }, { id: 'existing-add', name: 'monitor-add', type: 1 }, { id: 'unrelated', name: 'help', type: 1 }];
   const rest = {
-    async get(route) { calls.push(['get', route]); return existing; },
-    async put(route, options) { calls.push(['put', route, options.body.name]); },
-    async post(route, options) { calls.push(['post', route, options.body.name]); }
+    async put(route, options) { calls.push(['put', route, options.body]); }
   };
   await registerCommands({ rest, clientId: 'client', guildId: 'guild', commands, routes });
   assert.deepEqual(calls, [
-    ['get', 'collection:client:guild'],
-    ['put', 'command:client:guild:existing-setup', 'monitor-setup'],
-    ['put', 'command:client:guild:existing-add', 'monitor-add'],
-    ['post', 'collection:client:guild', 'monitor-hide'],
-    ['post', 'collection:client:guild', 'monitor-show']
+    ['put', 'collection:client:guild', []],
+    ['put', 'collection:client:guild', commands.map(command => command.toJSON())]
   ]);
 });
