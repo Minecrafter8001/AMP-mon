@@ -46,7 +46,7 @@ export function buildOverviewEmbeds(snapshot, hiddenIds = []) {
   const fields = [...visibleInstances].sort((first, second) => `${first.friendlyName ?? first.name}/${first.id}`.localeCompare(`${second.friendlyName ?? second.name}/${second.id}`)).map(instance => ({
     name: safeText(instance.friendlyName ?? instance.name ?? 'Unnamed server', 100),
     value: `${publicStatus(instance)} | ${publicPlayers(instance)}`,
-    inline: false
+    inline: true
   }));
   const pages = [];
   let pageFields = [];

@@ -36,6 +36,7 @@ async function main() {
     void (async () => {
       await dashboard.startCleanup();
       await monitor.start();
+      console.info('Monitoring started successfully.');
     })().catch(async () => {
       console.error('Monitoring startup failed; check configuration and service permissions.');
       process.exitCode = 1;
