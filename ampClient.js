@@ -183,7 +183,8 @@ export class AmpClient {
       metricKeys: { ...this.settings.metricKeys, ...override.metricKeys },
       appStateMap: { ...this.settings.appStateMap, ...override.appStateMap }
     };
-    const input = { ...instance, rawEndpoints: override.endpoints ?? instance.rawEndpoints };
+    const rawEndpoints = override.endpoints ?? (this.settings.useReportedEndpoints === false ? [] : instance.rawEndpoints);
+    const input = { ...instance, rawEndpoints };
     if (instance.ampRunning === false) {
       return normalizeStatus({ ...input, ...this.cachedMaintenance(instance.id) }, {}, settings);
     }

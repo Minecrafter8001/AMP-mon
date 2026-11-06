@@ -14,10 +14,26 @@ export const commands = [
     .addStringOption(option => option.setName('instance_name').setDescription('Server name to hide').setRequired(true).setAutocomplete(true).setMaxLength(100)),
   new SlashCommandBuilder().setName('monitor-show').setDescription('Show a hidden server in the public status overview')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(option => option.setName('instance_name').setDescription('Hidden server name to restore').setRequired(true).setAutocomplete(true).setMaxLength(100))
+    .addStringOption(option => option.setName('instance_name').setDescription('Hidden server name to restore').setRequired(true).setAutocomplete(true).setMaxLength(100)),
+  new SlashCommandBuilder().setName('monitor-address').setDescription('Set manual connection addresses for a server')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
+    .addStringOption(option => option.setName('addresses').setDescription('One address per line, or "clear" to remove manual addresses').setRequired(true).setMaxLength(1000))
 ];
 
-const instanceCommands = new Set(['monitor-add', 'monitor-hide', 'monitor-show']);
+const instanceCommands = new Set(['monitor-add', 'monitor-hide', 'monitor-show', 'monitor-address']);
+
+export function parseManualAddresses(input) {
+  if (typeof input !== 'string') throw new Error('Addresses must be text.');
+  const value = input.trim();
+  if (/^clear$/i.test(value)) return null;
+  const addresses = [...new Set(value.split(/\r?\n/).map(address => address.trim()).filter(Boolean))];
+  if (!addresses.length) throw new Error('Addresses must contain one address per line, or use "clear".');
+  if (addresses.length > 10 || addresses.some(address => address.length > 180 || /[\u0000-\u001f]/.test(address))) {
+    throw new Error('Provide at most 10 addresses, each no longer than 180 characters.');
+  }
+  return addresses;
+}
 
 function resolveInstance(snapshot, name) {
   const matches = snapshot.instances.filter(instance => instance.name === name && instance.available);
@@ -81,6 +97,15 @@ export function commandHandler({ guildId, monitor, dashboard, store, log = conso
           await interaction.editReply({ content: `${instance.name} ${hidden ? 'hidden from' : 'shown in'} the public status overview.`, allowedMentions: { parse: [] } });
           return;
         }
+        if (interaction.commandName === 'monitor-address') {
+          const addresses = parseManualAddresses(interaction.options.getString('addresses', true));
+          await dashboard.setManualAddresses(instance.id, addresses, snapshot);
+          await interaction.editReply({
+            content: addresses ? `Manual addresses updated for ${instance.friendlyName ?? instance.name}.` : `Manual addresses cleared for ${instance.friendlyName ?? instance.name}.`,
+            allowedMentions: { parse: [] }
+          });
+          return;
+        }
         const channel = interaction.options.getChannel('channel') ?? interaction.channel;
         if (!channel || channel.guildId !== guildId || channel.type !== ChannelType.GuildText) throw new Error('Choose a text channel in this guild.');
         await dashboard.channel(channel.id);
@@ -96,7 +121,7 @@ export function commandHandler({ guildId, monitor, dashboard, store, log = conso
     } catch (error) {
       log.warn('Monitor configuration command failed', { command: interaction.commandName });
       // Only controlled validation messages are exposed; transport payloads are never relayed.
-      const content = error.name === 'Error' && /^(Choose |Unknown AMP instance name|That AMP instance name|AMP discovery|Bot needs|Dashboard needs)/.test(error.message)
+      const content = error.name === 'Error' && /^(Choose |Unknown AMP instance name|That AMP instance name|AMP discovery|Bot needs|Dashboard needs|Addresses )/.test(error.message)
         ? error.message : 'Dashboard setup failed. Check bot channel permissions and the operator logs.';
       try {
         if (interaction.deferred || interaction.replied) await interaction.editReply({ content, allowedMentions: { parse: [] } });

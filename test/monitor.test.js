@@ -13,11 +13,11 @@ import { commands, commandHandler } from '../commands.js';
 import { registerCommands } from '../commandRegistration.js';
 
 test('slash command registration and runtime handlers enforce guild administration', async () => {
-  assert.equal(commands.length, 4);
+  assert.equal(commands.length, 5);
   assert.equal(commands[1].toJSON().options[0].name, 'instance_name');
   assert.equal(commands[1].toJSON().options[0].required, true);
   assert.equal(commands[1].toJSON().options[0].autocomplete, true);
-  assert.deepEqual(commands.slice(2).map(command => command.name), ['monitor-hide', 'monitor-show']);
+  assert.deepEqual(commands.slice(2).map(command => command.name), ['monitor-hide', 'monitor-show', 'monitor-address']);
   assert.ok(commands.slice(2).every(command => command.toJSON().options[0].autocomplete));
   let bound = false;
   const handler = commandHandler({ guildId, monitor: { snapshot }, dashboard: { bind: async () => { bound = true; } }, log: quiet });

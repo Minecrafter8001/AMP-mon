@@ -24,6 +24,7 @@
       "discoveryParams": {},
       "proxyPathTemplate": "API/ADSModule/Servers/{instanceId}/",
       "childSession": "login",
+      "useReportedEndpoints": true,
       "instanceOverrides": {},
       "metricKeys": {
         "cpu": "CPU Usage",
