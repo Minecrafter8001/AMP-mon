@@ -2,26 +2,26 @@ import { SlashCommandBuilder, ChannelType, PermissionFlagsBits, MessageFlags } f
 
 /** Guild registration plus runtime checks both enforce administrative configuration. */
 export const commands = [
-  new SlashCommandBuilder().setName('monitor-setup').setDescription('Configure the network status dashboard')
+  new SlashCommandBuilder().setName('monitor').setDescription('Configure AMP network monitoring')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addChannelOption(option => option.setName('channel').setDescription('Dashboard text channel').addChannelTypes(ChannelType.GuildText)),
-  new SlashCommandBuilder().setName('monitor-add').setDescription('Track one AMP instance in a text channel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
-    .addChannelOption(option => option.setName('channel').setDescription('Tracking text channel').addChannelTypes(ChannelType.GuildText)),
-  new SlashCommandBuilder().setName('monitor-hide').setDescription('Hide a server from the public status overview')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(option => option.setName('instance_name').setDescription('Server name to hide').setRequired(true).setAutocomplete(true).setMaxLength(100)),
-  new SlashCommandBuilder().setName('monitor-show').setDescription('Show a hidden server in the public status overview')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(option => option.setName('instance_name').setDescription('Hidden server name to restore').setRequired(true).setAutocomplete(true).setMaxLength(100)),
-  new SlashCommandBuilder().setName('monitor-address').setDescription('Set manual connection addresses for a server')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
-    .addStringOption(option => option.setName('addresses').setDescription('One address per line, or "clear" to remove manual addresses').setRequired(true).setMaxLength(1000))
+    .addSubcommand(subcommand => subcommand.setName('setup').setDescription('Add a network overview to a channel')
+      .addChannelOption(option => option.setName('channel').setDescription('Dashboard text channel').addChannelTypes(ChannelType.GuildText)))
+    .addSubcommand(subcommand => subcommand.setName('add').setDescription('Track an AMP instance in a channel')
+      .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
+      .addChannelOption(option => option.setName('channel').setDescription('Tracking text channel').addChannelTypes(ChannelType.GuildText)))
+    .addSubcommand(subcommand => subcommand.setName('hide').setDescription('Hide a server from the public overview')
+      .addStringOption(option => option.setName('instance_name').setDescription('Server name to hide').setRequired(true).setAutocomplete(true).setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand.setName('show').setDescription('Show a hidden server in the public overview')
+      .addStringOption(option => option.setName('instance_name').setDescription('Hidden server name to restore').setRequired(true).setAutocomplete(true).setMaxLength(100)))
+    .addSubcommand(subcommand => subcommand.setName('address').setDescription('Set manual connection addresses')
+      .addStringOption(option => option.setName('instance_name').setDescription('AMP instance name').setRequired(true).setAutocomplete(true).setMaxLength(100))
+      .addStringOption(option => option.setName('addresses').setDescription('One address per line, or clear to remove them').setRequired(true).setMaxLength(1000)))
+    .addSubcommand(subcommand => subcommand.setName('remove-channel').setDescription('Remove an overview or instance dashboard from a channel')
+      .addChannelOption(option => option.setName('channel').setDescription('Channel to remove; defaults to this channel').addChannelTypes(ChannelType.GuildText))
+      .addStringOption(option => option.setName('instance_name').setDescription('Instance name; omit for the network overview').setAutocomplete(true).setMaxLength(100)))
 ];
 
-const instanceCommands = new Set(['monitor-add', 'monitor-hide', 'monitor-show', 'monitor-address']);
+const instanceCommands = new Set(['add', 'hide', 'show', 'address', 'remove-channel']);
 
 export function parseManualAddresses(input) {
   if (typeof input !== 'string') throw new Error('Addresses must be text.');
@@ -35,23 +35,23 @@ export function parseManualAddresses(input) {
   return addresses;
 }
 
-function resolveInstance(snapshot, name) {
-  const matches = snapshot.instances.filter(instance => instance.name === name && instance.available);
+function resolveInstance(snapshot, name, allowUnavailable = false) {
+  const matches = snapshot.instances.filter(instance => instance.name === name && (allowUnavailable || instance.available));
   if (matches.length === 0) throw new Error('Unknown AMP instance name. Choose a server from autocomplete.');
   if (matches.length > 1) throw new Error('That AMP instance name is ambiguous. Give the instances unique names in AMP, then try again.');
   return matches[0];
 }
 
-function autocompleteChoices(interaction, snapshot, hiddenIds) {
-  if (!instanceCommands.has(interaction.commandName) || !snapshot || snapshot.discoveryFailed) return [];
+function autocompleteChoices(interaction, subcommand, snapshot, hiddenIds) {
+  if (!instanceCommands.has(subcommand) || !snapshot || (snapshot.discoveryFailed && subcommand !== 'remove-channel')) return [];
   const focused = interaction.options.getFocused(true);
   if (focused.name !== 'instance_name') return [];
   const hidden = new Set(hiddenIds);
   const query = String(focused.value).toLocaleLowerCase();
   const seen = new Set();
   return snapshot.instances
-    .filter(instance => instance.available)
-    .filter(instance => interaction.commandName === 'monitor-show' ? hidden.has(instance.id) : interaction.commandName === 'monitor-hide' ? !hidden.has(instance.id) : true)
+    .filter(instance => instance.available || subcommand === 'remove-channel')
+    .filter(instance => subcommand === 'show' ? hidden.has(instance.id) : subcommand === 'hide' ? !hidden.has(instance.id) : true)
     .filter(instance => instance.name.toLocaleLowerCase().includes(query))
     .filter(instance => {
       if (seen.has(instance.name)) return false;
@@ -66,35 +66,53 @@ export function commandHandler({ guildId, monitor, dashboard, store, log = conso
   return async interaction => {
     if (interaction.isAutocomplete()) {
       try {
-        if (interaction.guildId !== guildId || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+        if (interaction.commandName !== 'monitor' || interaction.guildId !== guildId || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
           await interaction.respond([]);
           return;
         }
         const config = store.snapshot();
-        await interaction.respond(autocompleteChoices(interaction, monitor.snapshot, config.hiddenInstances));
+        await interaction.respond(autocompleteChoices(interaction, interaction.options.getSubcommand(), monitor.snapshot, config.hiddenInstances));
       } catch {
         try { await interaction.respond([]); } catch { log.warn('Autocomplete response could not be delivered'); }
       }
       return;
     }
-    if (!interaction.isChatInputCommand() || !commands.some(command => command.name === interaction.commandName)) return;
+    if (!interaction.isChatInputCommand() || interaction.commandName !== 'monitor') return;
     try {
       if (interaction.guildId !== guildId || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
         await interaction.reply({ content: 'Manage Server permission in the configured guild is required.', flags: MessageFlags.Ephemeral });
         return;
       }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'remove-channel') {
+        const channel = interaction.options.getChannel('channel') ?? interaction.channel;
+        if (!channel || channel.guildId !== guildId || channel.type !== ChannelType.GuildText) throw new Error('Choose a text channel in this guild.');
+        const name = interaction.options.getString('instance_name');
+        let id = null;
+        if (name) {
+          const snapshot = monitor.snapshot ?? await monitor.poll();
+          if (!snapshot) throw new Error('AMP discovery is unavailable; try again after connectivity is restored.');
+          id = resolveInstance(snapshot, name, true).id;
+        }
+        const result = await dashboard.removeChannel(id, channel.id);
+        const content = result.removed
+          ? `Dashboard removed from <#${channel.id}>.${result.cleanupFailed ? ' Old messages could not be deleted; remove them manually.' : ''}`
+          : 'No matching dashboard is configured in that channel.';
+        await interaction.editReply({ content, allowedMentions: { parse: [] } });
+        return;
+      }
       const snapshot = monitor.snapshot && !monitor.snapshot.discoveryFailed ? monitor.snapshot : await monitor.poll();
       if (!snapshot || snapshot.discoveryFailed) throw new Error('AMP discovery is unavailable; try again after connectivity is restored.');
-      if (instanceCommands.has(interaction.commandName)) {
+      if (instanceCommands.has(subcommand)) {
         const instance = resolveInstance(snapshot, interaction.options.getString('instance_name', true));
-        if (interaction.commandName === 'monitor-hide' || interaction.commandName === 'monitor-show') {
-          const hidden = interaction.commandName === 'monitor-hide';
+        if (subcommand === 'hide' || subcommand === 'show') {
+          const hidden = subcommand === 'hide';
           await dashboard.setHidden(instance.id, hidden, snapshot);
           await interaction.editReply({ content: `${instance.name} ${hidden ? 'hidden from' : 'shown in'} the public status overview.`, allowedMentions: { parse: [] } });
           return;
         }
-        if (interaction.commandName === 'monitor-address') {
+        if (subcommand === 'address') {
           const addresses = parseManualAddresses(interaction.options.getString('addresses', true));
           await dashboard.setManualAddresses(instance.id, addresses, snapshot);
           await interaction.editReply({

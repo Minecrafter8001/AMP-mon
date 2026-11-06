@@ -13,16 +13,15 @@ import { commands, commandHandler } from '../commands.js';
 import { registerCommands } from '../commandRegistration.js';
 
 test('slash command registration and runtime handlers enforce guild administration', async () => {
-  assert.equal(commands.length, 5);
-  assert.equal(commands[1].toJSON().options[0].name, 'instance_name');
-  assert.equal(commands[1].toJSON().options[0].required, true);
-  assert.equal(commands[1].toJSON().options[0].autocomplete, true);
-  assert.deepEqual(commands.slice(2).map(command => command.name), ['monitor-hide', 'monitor-show', 'monitor-address']);
-  assert.ok(commands.slice(2).every(command => command.toJSON().options[0].autocomplete));
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].name, 'monitor');
+  const subcommands = commands[0].toJSON().options;
+  assert.deepEqual(subcommands.map(command => command.name), ['setup', 'add', 'hide', 'show', 'address', 'remove-channel']);
+  assert.equal(subcommands.find(command => command.name === 'add').options[0].autocomplete, true);
   let bound = false;
   const handler = commandHandler({ guildId, monitor: { snapshot }, dashboard: { bind: async () => { bound = true; } }, log: quiet });
   let response;
-  await handler({ isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor-setup', guildId, memberPermissions: { has: () => false }, reply: async body => { response = body; } });
+  await handler({ isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor', guildId, memberPermissions: { has: () => false }, reply: async body => { response = body; } });
   assert.equal(bound, false);
   assert.ok(response.content.includes('permission'));
 });
@@ -51,17 +50,17 @@ test('dashboard edits stored messages and replaces only confirmed deleted messag
   const discord = fakeDiscord();
   const dashboard = new Dashboard({ store, client: discord.client, guildId, log: quiet });
   await dashboard.bind(null, channelId, snapshot);
-  const first = store.snapshot().overview.messageIds[0];
+  const first = store.snapshot().overview[0].messageIds[0];
   await dashboard.publish(snapshot);
   assert.equal(discord.messages.get(first).edits, 1);
   discord.messages.delete(first);
   await dashboard.publish(snapshot);
-  const replacement = store.snapshot().overview.messageIds[0];
+  const replacement = store.snapshot().overview[0].messageIds[0];
   assert.notEqual(first, replacement);
   discord.channel.messages.fetch = async () => { throw Object.assign(new Error('denied'), { code: 50013 }); };
   await dashboard.publish(snapshot);
   assert.equal(discord.messages.size, 1);
-  assert.equal(store.snapshot().overview.messageIds[0], replacement);
+  assert.equal(store.snapshot().overview[0].messageIds[0], replacement);
 });
 
 test('large overview pages obey embed limits and alert cleanup survives reconstruction', async () => {
@@ -254,7 +253,7 @@ test('overview shrinking removes surplus tracked pages and simultaneous binds re
   assert.ok(discord.messages.size > 1);
   await dashboard.publish(snapshot);
   assert.equal(discord.messages.size, 1);
-  assert.equal(store.snapshot().overview.messageIds.length, 1);
+  assert.equal(store.snapshot().overview[0].messageIds.length, 1);
 });
 
 test('JSON transactions preserve concurrent changes and isolate snapshots', async () => {
@@ -323,9 +322,9 @@ test('monitor-add resolves exact non-friendly instance name and keeps its ID int
   const handler = commandHandler({ guildId, monitor: { snapshot: { ...snapshot, instances: [instance] } }, dashboard: { channel: async () => ({}), bind: async id => { boundId = id; } }, log: quiet });
   const replies = [];
   const interaction = {
-    isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor-add', guildId,
+    isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor', guildId,
     memberPermissions: { has: () => true }, channel: { id: channelId, guildId, type: ChannelType.GuildText },
-    options: { getChannel: () => null, getString: name => { assert.equal(name, 'instance_name'); return 'Minecraft_01'; } },
+    options: { getSubcommand: () => 'add', getChannel: () => null, getString: name => { assert.equal(name, 'instance_name'); return 'Minecraft_01'; } },
     async deferReply() {}, async editReply(response) { replies.push(response); }
   };
   await handler(interaction);
@@ -342,15 +341,15 @@ test('autocomplete filters names and scopes hide/show suggestions to visibility'
     { id: 'game-stopped', name: 'Minecraft_02', available: false }
   ] } };
   const handler = commandHandler({ guildId, monitor, dashboard: {}, store, log: quiet });
-  async function complete(commandName, value) {
+  async function complete(subcommand, value) {
     let response;
-    await handler({ isAutocomplete: () => true, commandName, guildId, memberPermissions: { has: () => true },
-      options: { getFocused: () => ({ name: 'instance_name', value }) }, respond: async choices => { response = choices; } });
+    await handler({ isAutocomplete: () => true, commandName: 'monitor', guildId, memberPermissions: { has: () => true },
+      options: { getSubcommand: () => subcommand, getFocused: () => ({ name: 'instance_name', value }) }, respond: async choices => { response = choices; } });
     return response;
   }
-  assert.deepEqual((await complete('monitor-add', 'mine')).map(option => option.value), ['Minecraft_01']);
-  assert.deepEqual((await complete('monitor-hide', '')).map(option => option.value), ['Minecraft_01']);
-  assert.deepEqual((await complete('monitor-show', 'fact')).map(option => option.value), ['Factorio_01']);
+  assert.deepEqual((await complete('add', 'mine')).map(option => option.value), ['Minecraft_01']);
+  assert.deepEqual((await complete('hide', '')).map(option => option.value), ['Minecraft_01']);
+  assert.deepEqual((await complete('show', 'fact')).map(option => option.value), ['Factorio_01']);
 });
 
 test('hide/show commands persist visibility and update overview totals but retain dedicated embeds', async () => {
@@ -364,21 +363,21 @@ test('hide/show commands persist visibility and update overview totals but retai
   await dashboard.bind(null, channelId, monitor.snapshot);
   await dashboard.bind('hidden-game', channelId, monitor.snapshot);
   const handler = commandHandler({ guildId, monitor, dashboard, store, log: quiet });
-  async function run(commandName) {
+  async function run(subcommand) {
     let reply;
-    await handler({ isAutocomplete: () => false, isChatInputCommand: () => true, commandName, guildId, memberPermissions: { has: () => true },
-      options: { getString: () => 'Factorio_01' }, async deferReply() {}, async editReply(response) { reply = response; } });
+    await handler({ isAutocomplete: () => false, isChatInputCommand: () => true, commandName: 'monitor', guildId, memberPermissions: { has: () => true },
+      options: { getSubcommand: () => subcommand, getString: () => 'Factorio_01' }, async deferReply() {}, async editReply(response) { reply = response; } });
     return reply;
   }
-  await run('monitor-hide');
+  await run('hide');
   assert.deepEqual(store.snapshot().hiddenInstances, ['hidden-game']);
-  const overviewId = store.snapshot().overview.messageIds[0];
-  const dedicatedId = store.snapshot().instances['hidden-game'].messageIds[0];
+  const overviewId = store.snapshot().overview[0].messageIds[0];
+  const dedicatedId = store.snapshot().instances['hidden-game'][0].messageIds[0];
   const overviewAfterHide = JSON.stringify(discord.messages.get(overviewId).body.embeds[0].data);
   assert.doesNotMatch(overviewAfterHide, /Factorio_01/);
   assert.match(overviewAfterHide, /1 player online/);
   assert.match(discord.messages.get(dedicatedId).body.embeds[0].data.title, /Factorio/);
-  await run('monitor-show');
+  await run('show');
   assert.deepEqual(store.snapshot().hiddenInstances, []);
   const overviewAfterShow = JSON.stringify(discord.messages.get(overviewId).body.embeds[0].data);
   assert.match(overviewAfterShow, /Factorio/);

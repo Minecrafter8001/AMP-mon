@@ -101,7 +101,7 @@ test('manual address updates appear immediately and survive polls until cleared'
 test('setting and clearing an address edits the tracked message with the current configuration', async () => {
   const store = memoryStore();
   const messageId = '323456789012345678';
-  await store.update(config => { config.instances.game = { channelId, messageIds: [messageId] }; });
+  await store.update(config => { config.instances.game = [{ channelId, messageIds: [messageId] }]; });
   const message = { author: { id: 'bot' }, edits: [], async edit(payload) { this.edits.push(payload); } };
   const channel = {
     id: channelId, guildId, type: ChannelType.GuildText,
@@ -136,13 +136,13 @@ test('/monitor-address saves and clears manual addresses for the selected instan
   async function invoke(addresses) {
     await handler({
       isAutocomplete: () => false, isChatInputCommand: () => true,
-      commandName: 'monitor-address', guildId,
+      commandName: 'monitor', guildId,
       memberPermissions: { has: () => true },
-      options: { getString: name => name === 'instance_name' ? 'game01' : addresses },
+      options: { getSubcommand: () => 'address', getString: name => name === 'instance_name' ? 'game01' : addresses },
       async deferReply() {}, async editReply(value) { replies.push(value.content); }
     });
   }
-  assert.equal(commands.find(command => command.name === 'monitor-address').toJSON().options[0].autocomplete, true);
+  assert.equal(commands[0].toJSON().options.find(option => option.name === 'address').options[0].autocomplete, true);
   await invoke('public.example:1234\nsteam://connect/backup.example:5678');
   assert.deepEqual(store.data.settings.amp.instanceOverrides['internal-game-id'].endpoints, ['public.example:1234', 'steam://connect/backup.example:5678']);
   await invoke('clear');

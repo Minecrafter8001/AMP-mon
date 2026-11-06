@@ -8,7 +8,7 @@ export function defaults() {
     version: 1,
     guildId: null,
     networkUrl: null,
-    overview: null,
+    overview: [],
     instances: {},
     hiddenInstances: [],
     states: {},
@@ -57,8 +57,14 @@ export function validateConfig(config) {
   config.hiddenInstances ??= [];
   if (!Array.isArray(config.hiddenInstances) || !config.hiddenInstances.every(identifier => typeof identifier === 'string' && /^[\w-]+$/.test(identifier))) throw new Error('Invalid hidden instance list');
   const mapping = value => object(value) && snowflake(value.channelId) && Array.isArray(value.messageIds) && value.messageIds.every(snowflake);
-  if (config.overview !== null && !mapping(config.overview)) throw new Error('Invalid overview mapping');
-  if (!Object.entries(config.instances).every(([key, value]) => /^[\w-]+$/.test(key) && mapping(value))) throw new Error('Invalid instance mapping');
+  if (config.overview === null) config.overview = [];
+  else if (mapping(config.overview)) config.overview = [config.overview];
+  const mappings = values => Array.isArray(values) && values.every(mapping) && new Set(values.map(value => value.channelId)).size === values.length;
+  if (!mappings(config.overview)) throw new Error('Invalid overview mapping');
+  for (const [key, value] of Object.entries(config.instances)) {
+    if (mapping(value)) config.instances[key] = [value];
+    if (!/^[\w-]+$/.test(key) || !mappings(config.instances[key]) || config.instances[key].length === 0) throw new Error('Invalid instance mapping');
+  }
   if (!config.pendingAlerts.every(value => object(value) && snowflake(value.channelId) && snowflake(value.messageId) && Number.isFinite(value.deleteAt))) throw new Error('Invalid pending alerts');
   const settings = config.settings;
   if (!Number.isInteger(settings.pollIntervalMs) || settings.pollIntervalMs < 30000) throw new Error('pollIntervalMs must be at least 30000');
@@ -99,7 +105,9 @@ export class ConfigStore {
 
   async load() {
     try {
-      this.data = validateConfig(JSON.parse(await readFile(this.path, 'utf8')));
+      const original = JSON.parse(await readFile(this.path, 'utf8'));
+      this.data = validateConfig(structuredClone(original));
+      if (JSON.stringify(this.data) !== JSON.stringify(original)) await this.write(this.data);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       this.data = defaults();

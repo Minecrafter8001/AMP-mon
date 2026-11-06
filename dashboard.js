@@ -174,8 +174,10 @@ export class Dashboard {
 
   saveMapping(id, mapping) {
     return this.store.update(config => {
-      if (id === null) config.overview = structuredClone(mapping);
-      else config.instances[id] = structuredClone(mapping);
+      const mappings = id === null ? config.overview : (config.instances[id] ??= []);
+      const index = mappings.findIndex(value => value.channelId === mapping.channelId);
+      if (index < 0) mappings.push(structuredClone(mapping));
+      else mappings[index] = structuredClone(mapping);
     });
   }
 
@@ -191,7 +193,10 @@ export class Dashboard {
   publish(snapshot) {
     return this.serial(async () => {
       const config = this.store.snapshot();
-      const mappings = [...(config.overview ? [[null, config.overview]] : []), ...Object.entries(config.instances)];
+      const mappings = [
+        ...config.overview.map(mapping => [null, mapping]),
+        ...Object.entries(config.instances).flatMap(([id, channels]) => channels.map(mapping => [id, mapping]))
+      ];
       for (const [id, mapping] of mappings) {
         try { await this.upsert(mapping, this.render(id, snapshot, config), updated => this.saveMapping(id, updated)); }
         catch { this.log.warn('Dashboard update failed; check channel permissions', { instanceId: id, channelId: mapping.channelId }); }
@@ -199,20 +204,38 @@ export class Dashboard {
     });
   }
 
-  /** Rebinding removes old messages only after new messages are successfully tracked. */
+  /** Adding a channel leaves existing bindings and messages intact. */
   bind(id, channelId, snapshot) {
     return this.serial(async () => {
       await this.channel(channelId);
       const config = this.store.snapshot();
-      const old = id === null ? config.overview : config.instances[id];
-      const mapping = old?.channelId === channelId ? old : { channelId, messageIds: [] };
+      const mappings = id === null ? config.overview : config.instances[id] ?? [];
+      const mapping = mappings.find(value => value.channelId === channelId) ?? { channelId, messageIds: [] };
       await this.upsert(mapping, this.render(id, snapshot, config), updated => this.saveMapping(id, updated));
       await this.saveMapping(id, mapping);
-      if (old && old.channelId !== channelId) {
-        try {
-          const channel = await this.channel(old.channelId);
-          for (const messageId of old.messageIds) await this.deleteOwned(channel, messageId);
-        } catch { this.log.warn('Old dashboard cleanup failed', { channelId: old.channelId }); }
+    });
+  }
+
+  removeChannel(id, channelId) {
+    return this.serial(async () => {
+      const config = this.store.snapshot();
+      const mappings = id === null ? config.overview : config.instances[id] ?? [];
+      const mapping = mappings.find(value => value.channelId === channelId);
+      if (!mapping) return { removed: false, cleanupFailed: false };
+      await this.store.update(data => {
+        if (id === null) data.overview = data.overview.filter(value => value.channelId !== channelId);
+        else {
+          data.instances[id] = data.instances[id].filter(value => value.channelId !== channelId);
+          if (!data.instances[id].length) delete data.instances[id];
+        }
+      });
+      try {
+        const channel = await this.channel(channelId);
+        for (const messageId of mapping.messageIds) await this.deleteOwned(channel, messageId);
+        return { removed: true, cleanupFailed: false };
+      } catch {
+        this.log.warn('Removed dashboard messages could not be deleted', { channelId, instanceId: id });
+        return { removed: true, cleanupFailed: true };
       }
     });
   }
@@ -245,13 +268,17 @@ export class Dashboard {
   alert(instance) {
     return this.serial(async () => {
       const config = this.store.snapshot();
-      if (!config.overview || !config.settings.alerts.enabled || config.hiddenInstances.includes(instance.id)) return;
-      const channel = await this.channel(config.overview.channelId);
-      const message = await channel.send({ content: `Downtime detected: ${safeText(instance.name, 120)} is stopped.`, allowedMentions: { parse: [] } });
-      const retention = config.settings.alerts.retentionSeconds;
-      if (retention !== null) await this.store.update(data => {
-        data.pendingAlerts.push({ channelId: channel.id, messageId: message.id, deleteAt: this.now() + retention * 1000 });
-      });
+      if (!config.settings.alerts.enabled || config.hiddenInstances.includes(instance.id)) return;
+      for (const mapping of config.overview) {
+        try {
+          const channel = await this.channel(mapping.channelId);
+          const message = await channel.send({ content: `Downtime detected: ${safeText(instance.name, 120)} is stopped.`, allowedMentions: { parse: [] } });
+          const retention = config.settings.alerts.retentionSeconds;
+          if (retention !== null) await this.store.update(data => {
+            data.pendingAlerts.push({ channelId: channel.id, messageId: message.id, deleteAt: this.now() + retention * 1000 });
+          });
+        } catch { this.log.warn('Downtime alert could not be published', { channelId: mapping.channelId }); }
+      }
     });
   }
 
