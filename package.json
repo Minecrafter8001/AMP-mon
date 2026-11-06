@@ -1,0 +1,15 @@
+{
+  "name": "amp-mon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Single-guild Discord dashboards for a CubeCoders AMP network",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env index.js",
+    "deploy-commands": "node --env-file-if-exists=.env deploy-commands.js",
+    "test": "node --test",
+    "inspect-amp": "node --env-file-if-exists=.env inspect-amp.js"
+  },
+  "dependencies": { "discord.js": "^14.25.1" }
+}
