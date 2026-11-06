@@ -9,6 +9,11 @@ const number = value => typeof value === 'number' && Number.isFinite(value) && v
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const identifier = value => typeof value === 'string' && /^[\w-]+$/.test(value);
 
+export function normalizeEndpoints(endpoints) {
+  if (!Array.isArray(endpoints)) return [];
+  return endpoints.map(endpoint => typeof endpoint === 'string' ? endpoint : String(endpoint?.Endpoint ?? endpoint?.Uri ?? '')).filter(Boolean);
+}
+
 /** Keep reverse-proxy prefixes and reject credentials embedded in configured URLs. */
 export function baseUrl(value) {
   const url = new URL(value);
@@ -74,7 +79,8 @@ export function normalizeStatus(instance, status, settings, now = Date.now()) {
     cpu: number(cpu?.Percent),
     memory: { current: number(memory?.RawValue ?? memory?.Current), max: number(memory?.MaxValue ?? memory?.Max), unit: typeof memory?.Units === 'string' ? memory.Units : null },
     players: { current: stopped ? 0 : number(users?.RawValue ?? users?.Current), max: number(users?.MaxValue ?? users?.Max) },
-    endpoints: (instance.rawEndpoints ?? []).map(endpoint => typeof endpoint === 'string' ? endpoint : String(endpoint?.Endpoint ?? endpoint?.Uri ?? '')).filter(Boolean)
+    endpoints: normalizeEndpoints(instance.rawEndpoints),
+    reportedEndpoints: normalizeEndpoints(instance.reportedEndpoints ?? instance.rawEndpoints)
   };
 }
 
@@ -184,7 +190,7 @@ export class AmpClient {
       appStateMap: { ...this.settings.appStateMap, ...override.appStateMap }
     };
     const rawEndpoints = override.endpoints ?? (this.settings.useReportedEndpoints === false ? [] : instance.rawEndpoints);
-    const input = { ...instance, rawEndpoints };
+    const input = { ...instance, rawEndpoints, reportedEndpoints: instance.rawEndpoints };
     if (instance.ampRunning === false) {
       return normalizeStatus({ ...input, ...this.cachedMaintenance(instance.id) }, {}, settings);
     }

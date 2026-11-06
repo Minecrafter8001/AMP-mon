@@ -1,5 +1,6 @@
 import { EmbedBuilder, ChannelType, PermissionFlagsBits, escapeMarkdown } from 'discord.js';
 import { playerSummary } from './monitor.js';
+import { normalizeEndpoints } from './ampClient.js';
 
 /** AMP-controlled text is display data, never Discord mentions or formatting commands. */
 export function safeText(value, limit = 200) {
@@ -78,7 +79,7 @@ export function buildInstanceEmbed(instance, polledAt) {
   const ram = current && memory?.current !== null && memory?.current !== undefined && memory.unit
     ? `${memory.current}${memory.max === null ? '' : ` / ${memory.max}`} ${safeText(memory.unit, 30)}` : 'Unavailable';
   const players = current && instance.players?.current !== null && instance.players?.current !== undefined
-    ? `${instance.players.current}${instance.players.max === null || instance.players.max === undefined ? '' : ` / ${instance.players.max}`}` : 'Unavailable';
+    ? `${instance.players.current}${instance.players.max > 0 ? ` / ${instance.players.max}` : ''}` : 'Unavailable';
   const addresses = [...new Set((instance.endpoints ?? []).map(endpointText).filter(Boolean))];
   const fields = [
     { name: 'state', value: publicStatus(instance), inline: true },
@@ -181,7 +182,10 @@ export class Dashboard {
   render(id, snapshot, config = this.store.snapshot()) {
     if (id === null) return buildOverviewEmbeds(snapshot, config.hiddenInstances);
     const instance = snapshot.instances.find(value => value.id === id) ?? { id, name: id, available: false, players: { current: null, max: null } };
-    return [buildInstanceEmbed(instance, snapshot.polledAt)];
+    const ampSettings = config.settings.amp;
+    const reported = instance.reportedEndpoints ?? normalizeEndpoints(instance.rawEndpoints ?? instance.endpoints);
+    const endpoints = ampSettings.instanceOverrides[id]?.endpoints ?? (ampSettings.useReportedEndpoints ? reported : []);
+    return [buildInstanceEmbed({ ...instance, endpoints }, snapshot.polledAt)];
   }
 
   publish(snapshot) {
