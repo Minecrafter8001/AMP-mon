@@ -14,22 +14,37 @@ function endpointText(value) {
   } catch { return safeText(String(value).split('?')[0].split('#')[0], 180); }
 }
 
-function stateText(instance) {
-  if (!instance.available) return 'Unavailable';
-  if (instance.ampRunning === false) return 'AMP stopped';
-  const state = instance.appState ?? 'unknown';
-  return `${state[0].toUpperCase()}${state.slice(1)}${instance.stale ? ' (stale)' : ''}`;
+function publicStatus(instance) {
+  if (!instance.available || instance.stale) return 'Checking status';
+  if (instance.ampRunning === false || instance.appState === 'stopped') return 'Offline';
+  switch (instance.appState) {
+    case 'running': return 'Online';
+    case 'starting': return 'Starting';
+    case 'stopping': return 'Going offline';
+    case 'restarting': return 'Restarting';
+    default: return 'Checking status';
+  }
+}
+
+function publicPlayers(instance) {
+  if (!instance.available || instance.stale || instance.players?.current === null || instance.players?.current === undefined) return 'Player count updating';
+  const count = instance.players.current;
+  return `${count} ${count === 1 ? 'player' : 'players'}`;
 }
 
 /** One embed per tracked message keeps both per-embed and total message limits simple. */
 export function buildOverviewEmbeds(snapshot) {
   const summary = playerSummary(snapshot.instances);
-  const heading = `Online players: **${summary.total}**${summary.complete ? '' : ` (partial: ${summary.known}/${summary.count} readings)`}\n${snapshot.discoveryFailed ? 'Controller discovery unavailable; cached layout shown.\n' : ''}`;
-  const lines = [...snapshot.instances].sort((first, second) => `${first.host?.name}/${first.name}/${first.id}`.localeCompare(`${second.host?.name}/${second.name}/${second.id}`)).map(instance => {
-    const players = !instance.available || instance.stale ? '?' : instance.players?.current ?? '?';
-    return `**${safeText(instance.name, 80)}** | ${safeText(instance.host?.name ?? 'Local', 60)} | ${stateText(instance)} | players ${players}`;
+  const onlineCount = snapshot.instances.filter(instance => publicStatus(instance) === 'Online').length;
+  const unresolved = snapshot.discoveryFailed || snapshot.instances.some(instance => publicStatus(instance) === 'Checking status');
+  const total = snapshot.instances.length;
+  const availability = snapshot.discoveryFailed ? 'Server status is updating.' : total === 0 ? 'No servers to show right now.' : `${onlineCount} of ${total} ${total === 1 ? 'server' : 'servers'} online.`;
+  const players = summary.complete ? `${summary.total} ${summary.total === 1 ? 'player' : 'players'} online.` : `At least ${summary.total} ${summary.total === 1 ? 'player' : 'players'} online.`;
+  const heading = `**${availability}**\n${players}\n`;
+  const lines = [...snapshot.instances].sort((first, second) => `${first.name}/${first.id}`.localeCompare(`${second.name}/${second.id}`)).map(instance => {
+    return `**${safeText(instance.name, 100)}** | ${publicStatus(instance)} | ${publicPlayers(instance)}`;
   });
-  if (!lines.length) lines.push(snapshot.discoveryFailed ? 'No cached instances available.' : 'No managed game instances discovered.');
+  if (!lines.length && !snapshot.discoveryFailed) lines.push('Server list is not available yet.');
   const pages = [];
   let content = heading;
   for (const line of lines) {
@@ -38,10 +53,10 @@ export function buildOverviewEmbeds(snapshot) {
   }
   pages.push(content);
   return pages.map((description, index) => new EmbedBuilder()
-    .setTitle('Network Status Overview')
+    .setTitle('Server Status')
     .setDescription(description)
-    .setColor(snapshot.discoveryFailed ? 0xe1a526 : 0x239b65)
-    .setFooter({ text: `Page ${index + 1}/${pages.length} | Polling interval: 30 seconds or configured value` })
+    .setColor(snapshot.discoveryFailed || unresolved ? 0xe1a526 : total === 0 || onlineCount === total ? 0x239b65 : 0xd54a4a)
+    .setFooter(pages.length > 1 ? { text: `${index + 1} of ${pages.length}` } : null)
     .setTimestamp(snapshot.polledAt));
 }
 
@@ -56,7 +71,7 @@ export function buildInstanceEmbed(instance, polledAt) {
   return new EmbedBuilder().setTitle(safeText(instance.name ?? 'Unnamed instance', 256))
     .setColor(!instance.available || instance.stale ? 0xe1a526 : instance.ampRunning === false || instance.appState === 'stopped' ? 0xd54a4a : 0x239b65)
     .addFields(
-      { name: 'Execution state', value: stateText(instance), inline: true },
+      { name: 'Execution state', value: publicStatus(instance), inline: true },
       { name: 'CPU', value: current && instance.cpu !== null && instance.cpu !== undefined ? `${instance.cpu}%` : 'Unavailable', inline: true },
       { name: 'RAM', value: ram, inline: true },
       { name: 'Players', value: players, inline: true },

@@ -279,6 +279,22 @@ test('overview and instance embeds display names but never the internal AMP key'
   assert.doesNotMatch(instanceText, /secret-internal-guid|InstanceID/);
 });
 
+test('public overview avoids AMP, host and polling jargon while reporting availability and players', () => {
+  const instances = [
+    { id: 'one', name: 'Minecraft_01', host: { name: 'Private Node A' }, available: true, stale: false, ampRunning: true, appState: 'running', players: { current: 1 } },
+    { id: 'two', name: 'Palworld_02', host: { name: 'Private Node B' }, available: true, stale: false, ampRunning: false, appState: 'stopped', players: { current: 0 } },
+    { id: 'three', name: 'Valheim_03', host: { name: 'Private Node C' }, available: true, stale: true, ampRunning: true, appState: 'running', players: { current: 4 } }
+  ];
+  const embed = buildOverviewEmbeds({ ...snapshot, instances })[0].toJSON();
+  const visible = `${embed.title}\n${embed.description}\n${embed.footer?.text ?? ''}`;
+  assert.match(visible, /1 of 3 servers online/);
+  assert.match(visible, /At least 1 player online/);
+  assert.ok(visible.includes('Minecraft\\_01** | Online | 1 player'));
+  assert.ok(visible.includes('Palworld\\_02** | Offline | 0 players'));
+  assert.ok(visible.includes('Valheim\\_03** | Checking status | Player count updating'));
+  assert.doesNotMatch(visible, /AMP|Private Node|polling|partial|InstanceID|stale|one|two|three/);
+});
+
 test('monitor-add resolves exact non-friendly instance name and keeps its ID internal', async () => {
   const instance = { id: 'internal-id-123', name: 'Minecraft_01', available: true };
   let boundId;
